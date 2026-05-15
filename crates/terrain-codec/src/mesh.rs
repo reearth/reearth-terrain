@@ -3,8 +3,8 @@
 //! Generates binary .terrain files compatible with Cesium's quantized-mesh-1.0 format
 //! using the Martini RTIN algorithm for mesh simplification.
 
-use super::martini::Martini;
-use super::quantized_mesh::{
+use martini::Martini;
+use quantized_mesh::{
     EdgeIndices, EncodeOptions, QUANTIZED_MAX, QuantizedMeshEncoder, QuantizedMeshHeader,
     QuantizedVertices, TileBounds, TileMetadata, WaterMask, coords::geodetic_to_ecef,
 };
@@ -14,7 +14,7 @@ use super::quantized_mesh::{
 // they ride along with the metadata extension; they'll be the obvious
 // entry point when we expose tile-availability metadata.
 #[allow(unused_imports)]
-pub use super::quantized_mesh::{
+pub use quantized_mesh::{
     AvailableRange as MeshAvailableRange, TileBounds as MeshTileBounds,
     TileMetadata as MeshTileMetadata, WaterMask as MeshWaterMask,
 };

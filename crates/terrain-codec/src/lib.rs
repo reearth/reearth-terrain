@@ -1,16 +1,8 @@
-// Cesium quantized-mesh support modules, ported as-is from PLATEAU-VIEW/tile
-// (which itself credits MIERUNE/stralift). These are pure-compute Rust with
-// no I/O, so they fit cleanly under our wasm32 target.
-//
-// `dead_code` is allowed at module scope because the ports carry their
-// full original APIs even though our WASM surface only uses a subset —
-// keeping the rest available makes follow-up exports a one-line change.
-#[allow(dead_code)]
-mod martini;
+// Mesh generation uses the published `martini-rs` and `quantized-mesh`
+// crates; `mesh` is the local glue that wires them together for our
+// WASM surface.
 #[allow(dead_code)]
 mod mesh;
-#[allow(dead_code)]
-mod quantized_mesh;
 
 use image::codecs::png::PngEncoder;
 use image::codecs::webp::WebPEncoder;

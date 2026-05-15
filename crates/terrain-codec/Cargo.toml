@@ -16,6 +16,8 @@ image = { version = "0.25", default-features = false, features = ["webp", "png"]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+martini-rs = "0.1"
+quantized-mesh = "0.1"
 
 [package.metadata.wasm-pack.profile.release]
 # We invoke a system wasm-opt from scripts/build-wasm.mjs instead, because
