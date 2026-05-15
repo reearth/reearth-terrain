@@ -20,10 +20,10 @@ jobs:
     name: typecheck + wasm + wrangler dry-run
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       # Rust toolchain. `rust-toolchain.toml` pins channel + target.
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-15
         with:
           targets: wasm32-unknown-unknown
 
@@ -31,7 +31,7 @@ jobs:
       # invalidation than actions/cache (per-crate, prunes stale artifacts,
       # keyed off Cargo.lock + rustc version automatically). The wasm
       # release build is the slowest step, so this is what matters.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
           shared-key: wasm
           cache-targets: true
@@ -44,11 +44,11 @@ jobs:
       # Prebuilt binary instead of `cargo install` — saves minutes by
       # skipping a from-source build of wasm-pack on every run.
       - name: Install wasm-pack
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@184183c2401be73c3bf42c2e61268aa5855379c1 # v2.78.1
         with:
           tool: wasm-pack@0.14.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           # wrangler 4.x requires Node 22+
           node-version: 22
@@ -80,9 +80,9 @@ jobs:
     name: cargo test (terrain-codec)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-15
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
           shared-key: cargo-test
           cache-targets: true
@@ -100,15 +100,15 @@ jobs:
       contents: read
       deployments: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-15
         with:
           targets: wasm32-unknown-unknown
 
       # Reuse the same cache key as the build job so deploy can pick up
       # warm artifacts from the PR/main build that just passed.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
           shared-key: wasm
           cache-targets: true
@@ -117,11 +117,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y binaryen
 
       - name: Install wasm-pack
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@184183c2401be73c3bf42c2e61268aa5855379c1 # v2.78.1
         with:
           tool: wasm-pack@0.14.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
           cache: npm
