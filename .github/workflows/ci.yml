@@ -27,25 +27,26 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      # Cache cargo registry, git, and the workspace target dir. The
-      # release-profile wasm build is the slowest single step, so the
-      # target cache is what actually matters here.
-      - uses: actions/cache@v4
+      # Swatinem/rust-cache caches ~/.cargo and target/ with smarter
+      # invalidation than actions/cache (per-crate, prunes stale artifacts,
+      # keyed off Cargo.lock + rustc version automatically). The wasm
+      # release build is the slowest step, so this is what matters.
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          shared-key: wasm
+          cache-targets: true
 
       # wasm-pack ships a stale wasm-opt; we use the system one. Install
       # binaryen so build-wasm.mjs can find it (matches local setup).
       - name: Install binaryen (wasm-opt)
         run: sudo apt-get update && sudo apt-get install -y binaryen
 
+      # Prebuilt binary instead of `cargo install` — saves minutes by
+      # skipping a from-source build of wasm-pack on every run.
       - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.14.0 --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.14.0
 
       - uses: actions/setup-node@v4
         with:
@@ -81,14 +82,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-test-${{ runner.os }}-
+          shared-key: cargo-test
+          cache-targets: true
       - run: cargo test --manifest-path crates/terrain-codec/Cargo.toml --lib --release
 
   deploy:
@@ -109,20 +106,20 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - uses: actions/cache@v4
+      # Reuse the same cache key as the build job so deploy can pick up
+      # warm artifacts from the PR/main build that just passed.
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          shared-key: wasm
+          cache-targets: true
 
       - name: Install binaryen (wasm-opt)
         run: sudo apt-get update && sudo apt-get install -y binaryen
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.14.0 --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.14.0
 
       - uses: actions/setup-node@v4
         with:
