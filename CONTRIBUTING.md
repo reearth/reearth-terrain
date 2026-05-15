@@ -53,18 +53,33 @@ different rate of change:
    prefix becomes unreachable in one shot. Use for encoder swaps, blend
    formula changes, geoid model swaps. The Cron Trigger in `wrangler.toml`
    sweeps the orphaned R2 prefix daily (see `src/cleanup.ts`).
-2. **Watermask source date** (Protomaps daily build), HEAD-probed at
-   request time with a 1 h in-memory cache (`src/protomaps.ts`). The
-   resolved `YYYYMMDD` is folded into the *encoding* segment of the
-   cache key, so only watermask-bearing entries flip when a new build
-   ships.
-3. **Per-tile DEM freshness** (Mapterhorn), HEAD-probed against the
-   upstream tile when an L2 entry is older than 6 h
+2. **Per-tile PMTiles entry digest** (watermask, Protomaps daily build).
+   The daily archive URL is HEAD-probed and memoized for 1 h
+   (`src/protomaps.ts`), but the date itself does *not* go into the
+   cache key — daily rebuilds usually leave most byte ranges untouched,
+   and date-keying would needlessly invalidate every watermask-bearing
+   tile each morning. Instead, before the cache lookup the worker walks
+   the PMTiles directory for the tiles covering the current bounds
+   (`ProtomapsWaterMask.tileLocators`, `src/water.ts`) and hashes the
+   resolved `(offset, length)` pairs. That digest is folded into the
+   *encoding* segment, so a cached mesh tile keeps its identity across
+   any rebuild that didn't move the bytes it cares about. The directory
+   walk fetches no tile data — `getZxy` only runs on the cache-miss
+   path. On directory-lookup failures the version falls back to
+   `d-YYYYMMDD`, so cache keys stay deterministic when PMTiles is
+   briefly unreachable.
+3. **Per-tile DEM freshness** (Mapterhorn raster path only), HEAD-probed
+   against the upstream tile when an L2 entry is older than 6 h
    (`src/cache.ts` freshness probe + `MapterhornSource.freshness`).
    Mapterhorn rebuilds are regional, so we compare the upstream
    `Last-Modified` to the R2 object's `uploaded` time and invalidate
    only the tiles whose source actually changed — no global rotation
-   even after a substantial Mapterhorn release.
+   even after a substantial Mapterhorn release. The probe is wired into
+   the raster (terrarium/mapbox) endpoint, **not** the mesh endpoint:
+   mesh requests use Cesium geodetic (TMS) z/x/y, which can't be
+   passed to a WM-XYZ-shaped probe, and one geodetic tile fans out to
+   multiple WM source tiles anyway. Mesh entries rely on
+   `tileset.version` (operator-driven) for invalidation.
 
 ### Storage layers
 
@@ -82,9 +97,9 @@ different rate of change:
 SHA-256-truncated weak validator over
 `{tileset}@{version}:{encoding}:{data_type}:{z}:{x}:{y}.{format}`.
 The resolved version already encodes the geoid revision; the encoding
-segment carries the watermask build date when applicable; so a single
-weak ETag captures every invalidation axis. `If-None-Match` short-
-circuits before any cache lookup, generation, or freshness probe.
+segment carries the per-tile watermask digest when applicable; so a
+single weak ETag captures every invalidation axis. `If-None-Match`
+short-circuits before any cache lookup, generation, or freshness probe.
 
 ### Cache-Control
 
@@ -100,12 +115,15 @@ circuits before any cache lookup, generation, or freshness probe.
 - If the change is upstream-driven and global → resolve at request
   time and fold into either the cache-key prefix (when the whole
   cached output goes stale) or the encoding segment (when it only
-  affects one variant), mirroring the Protomaps daily-build pattern.
-- If the change is upstream-driven and per-region → implement
-  `DemSource.freshness` (or an analogous per-tile probe) and pass a
-  `FreshnessProbe` into `cachedTile`. Compare upstream `Last-Modified`
-  against `R2Object.uploaded` and rely on the probe TTL for cost
-  control.
+  affects one variant).
+- If the change is upstream-driven and per-region → prefer a
+  content-correlated per-tile fingerprint (cheap upstream metadata
+  hashed and folded into the encoding segment, mirroring the
+  Protomaps PMTiles directory pattern). Only reach for a freshness
+  probe (`DemSource.freshness` → `FreshnessProbe` on `cachedTile`)
+  when no such fingerprint is available; freshness compares upstream
+  `Last-Modified` against `R2Object.uploaded` and relies on the probe
+  TTL for cost control.
 
 ## Debug endpoints
 

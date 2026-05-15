@@ -27,8 +27,9 @@ import {
   sampleGrid,
   type SampleDataType,
 } from "./cesium.js";
-import { ProtomapsWaterMask } from "./water.js";
+import { ProtomapsWaterMask, type TileLocator } from "./water.js";
 import { currentPmtilesDate, pmtilesUrlForDate } from "./protomaps.js";
+import type { GeodeticBounds } from "./cesium.js";
 
 // Memoize one provider per resolved URL so the PMTiles header fetched at
 // construction time is reused across requests within a worker instance.
@@ -69,20 +70,46 @@ function demFreshness(
 }
 
 /**
- * Resolve a tileset's watermask source down to the concrete URL and version
- * we'll fetch/cache against. Returns null when the tileset has no watermask
- * configured.
+ * Resolve a tileset's watermask source down to the concrete URL, version,
+ * and provider we'll fetch/cache against. Returns null when the tileset
+ * has no watermask configured.
+ *
+ * The version is a digest of the *PMTiles directory entries* (offset +
+ * compressed length) that the upstream tiles for `bounds` would resolve
+ * to. Two consecutive daily builds whose entries for these tiles are
+ * unchanged share the same version, so the encoded mesh tile keeps its
+ * cache identity across rebuilds. Falls back to a date-tagged version if
+ * the directory lookup fails — we still want a deterministic cache key
+ * even when PMTiles is unreachable.
  */
 async function resolveWatermask(
   tileset: Tileset,
+  bounds: GeodeticBounds,
 ): Promise<{ url: string; version: string; provider: ProtomapsWaterMask } | null> {
   if (!tileset.watermask) return null;
   if (tileset.watermask.kind === "protomaps-daily") {
     const date = await currentPmtilesDate();
     const url = pmtilesUrlForDate(date);
-    return { url, version: `protomaps-${date}`, provider: getWaterProvider(url) };
+    const provider = getWaterProvider(url);
+    let version: string;
+    try {
+      const locators = await provider.tileLocators(bounds);
+      version = await digestLocators(locators);
+    } catch {
+      version = `d-${date}`;
+    }
+    return { url, version, provider };
   }
   return null;
+}
+
+async function digestLocators(locators: TileLocator[]): Promise<string> {
+  const seed = locators.map((l) => `${l.offset}:${l.length}`).join("|");
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed));
+  const view = new Uint8Array(buf, 0, 8);
+  let hex = "";
+  for (const b of view) hex += b.toString(16).padStart(2, "0");
+  return hex;
 }
 
 // Route patterns. Tileset name comes first when present; the no-tileset
@@ -357,11 +384,13 @@ async function serveMesh(
   const includeNormals = extensions.has("octvertexnormals") || boolParam(query, "normals");
   const includeWaterMask = extensions.has("watermask") || boolParam(query, "watermask");
 
-  // Resolve the watermask source up-front (HEAD-probed, cached) so its
-  // version can be folded into the cache key BEFORE the cache lookup
-  // happens. A new daily build flips the version and naturally
-  // invalidates only watermask-bearing entries.
-  const watermask = includeWaterMask ? await resolveWatermask(tileset) : null;
+  const bounds = geodeticTileBounds(z, x, y);
+
+  // Resolve the watermask source up-front so its per-tile version can be
+  // folded into the cache key BEFORE the cache lookup happens. The version
+  // is the PMTiles entry digest for the bounds — daily rebuilds only flip
+  // it when the underlying byte ranges actually change.
+  const watermask = includeWaterMask ? await resolveWatermask(tileset, bounds) : null;
 
   const variant: string[] = [];
   if (includeNormals) variant.push("n");
@@ -384,11 +413,13 @@ async function serveMesh(
       y,
       format: "terrain",
       fallbackContentType: "application/vnd.quantized-mesh",
-      freshness: demFreshness(tileset, dataType, z, x, y),
+      // No DEM freshness probe on the mesh path: the request coords are
+      // Cesium geodetic (TMS) but `MapterhornSource.freshness` expects WM
+      // XYZ. A geodetic tile also fans out to multiple WM tiles, so a
+      // single-tile probe isn't semantically right anyway. `tileset.version`
+      // remains the invalidation knob for mesh entries.
     },
     async () => {
-      const bounds = geodeticTileBounds(z, x, y);
-
       // Watermask comes from Protomaps when available — that's correct
       // over polders, salt flats, and high-altitude lakes that an
       // elevation threshold gets wrong. The DEM heuristic stays as a
@@ -641,7 +672,7 @@ async function debugWaterMask(url: URL, env: Env): Promise<Response> {
   const tileset = resolveTileset(tilesetName ?? undefined);
   if (!tileset) return notFound(`unknown tileset: ${tilesetName}`);
   const bounds = geodeticTileBounds(z, x, y);
-  const wm = await resolveWatermask(tileset);
+  const wm = await resolveWatermask(tileset, bounds);
   if (!wm) return json({ error: "watermask disabled for tileset", tileset: tileset.name });
 
   const t0 = Date.now();

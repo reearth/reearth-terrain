@@ -11,13 +11,26 @@
 // them. The result is encoded as the Cesium watermask byte payload
 // (Uniform when uniform, Grid otherwise).
 
-import { PMTiles, FetchSource } from "pmtiles";
+import { PMTiles, FetchSource, findTile, zxyToTileId, type Header } from "pmtiles";
 import { VectorTile } from "@mapbox/vector-tile";
 import Pbf from "pbf";
 import type { GeodeticBounds } from "./cesium.js";
 
 export interface WaterMaskProvider {
   buildMask(bounds: GeodeticBounds, signal?: AbortSignal): Promise<Uint8Array>;
+}
+
+/**
+ * Lightweight fingerprint of the upstream PMTiles bytes that *would* be
+ * read to build a watermask for a given bounds. Each entry is the
+ * `(offset, length)` pair of one underlying WM tile in the archive; an
+ * absent tile collapses to `(0, 0)`. Two different daily PMTiles builds
+ * that left these byte ranges untouched will produce identical fingerprints,
+ * letting the encoded mesh tile keep its cache identity across rebuilds.
+ */
+export interface TileLocator {
+  offset: number;
+  length: number;
 }
 
 // Protomaps publishes up to z=15 in the global build. Beyond that we fall
@@ -71,6 +84,56 @@ export class ProtomapsWaterMask implements WaterMaskProvider {
     );
 
     return classifyMask(mask);
+  }
+
+  /**
+   * Resolve the directory entries (offset + compressed length) for the WM
+   * tiles that cover `bounds`. The intent is a cache-key digest, not data
+   * access — the tile bytes are not fetched here. Walks at most a couple
+   * of leaf-directory hops per tile.
+   *
+   * A tile absent from the archive collapses to `(0, 0)`. Returned order
+   * is deterministic so the digest is stable.
+   */
+  async tileLocators(bounds: GeodeticBounds, signal?: AbortSignal): Promise<TileLocator[]> {
+    const wmZoom = pickWmZoom(bounds);
+    const wmTiles = wmTilesCovering(bounds, wmZoom);
+    const header = await this.#pmtiles.cache.getHeader(this.#pmtiles.source);
+    return Promise.all(
+      wmTiles.map((t) => this.#resolveEntry(header, t.z, t.x, t.y, signal)),
+    );
+  }
+
+  async #resolveEntry(
+    header: Header,
+    z: number,
+    x: number,
+    y: number,
+    signal?: AbortSignal,
+  ): Promise<TileLocator> {
+    const tileId = zxyToTileId(z, x, y);
+    let dirOffset = header.rootDirectoryOffset;
+    let dirLength = header.rootDirectoryLength;
+    // Root + a small bound on leaf hops. PMTiles archives in practice
+    // bottom out within 1–2 leaf hops; 4 is defensive without risking a
+    // pathological pointer cycle stalling cache lookup.
+    for (let i = 0; i < 4; i++) {
+      void signal;
+      const entries = await this.#pmtiles.cache.getDirectory(
+        this.#pmtiles.source,
+        dirOffset,
+        dirLength,
+        header,
+      );
+      const entry = findTile(entries, tileId);
+      if (!entry) return { offset: 0, length: 0 };
+      if (entry.runLength > 0) {
+        return { offset: entry.offset, length: entry.length };
+      }
+      dirOffset = header.leafDirectoryOffset + entry.offset;
+      dirLength = entry.length;
+    }
+    return { offset: 0, length: 0 };
   }
 }
 

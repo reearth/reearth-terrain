@@ -6,10 +6,11 @@
 // `${YYYYMMDD}.pmtiles` walking back from today and memoizes the first OK
 // response for an hour per worker instance.
 //
-// The resolved date doubles as the watermask source version: it gets folded
-// into the L1/L2 cache key and ETag for watermask-bearing tiles, so a new
-// upstream build naturally invalidates exactly those caches without
-// disturbing the base terrain.
+// The resolved date selects which archive to read; the cache key is
+// derived per-tile from PMTiles directory entries (see
+// `ProtomapsWaterMask.tileLocators`) so daily rebuilds only invalidate
+// the watermask-bearing entries whose underlying byte ranges actually
+// moved.
 //
 // Ported from reearth-buildings' apps/worker/src/version.ts which solves
 // the same problem for its glb pipeline.
