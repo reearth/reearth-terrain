@@ -1,4 +1,4 @@
-[![Re:Earth Terrain — a 3D-rendered red Mt. Fuji rising from elevation tiles](src/og.jpg)](https://terrain.reearth.land/)
+[![Re:Earth Terrain — a 3D-rendered red Mt. Fuji rising from elevation tiles](https://terrain.reearth.land/og.jpg)](https://terrain.reearth.land/)
 
 # Re:Earth Terrain - [terrain.reearth.land](https://terrain.reearth.land/)
 
