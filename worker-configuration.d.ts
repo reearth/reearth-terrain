@@ -7,6 +7,7 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		R2: R2Bucket;
+		ASSETS: Fetcher;
 		ENVIRONMENT: string;
 		DISABLE_CACHE: string;
 		ENABLE_DEBUG: string;

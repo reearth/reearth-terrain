@@ -107,6 +107,21 @@ export default {
     const url = new URL(req.url);
 
     try {
+      // Landing-page content negotiation. `run_worker_first` in
+      // wrangler.toml routes `/` and `/index.html` through the worker
+      // before the asset router; when an AI client (or `curl -H "Accept:
+      // text/markdown"`) prefers Markdown, hand back `index.md`.
+      // Otherwise delegate to the asset binding so the HTML, headers,
+      // and caching behave exactly as if the worker weren't in the path.
+      if (url.pathname === "/" || url.pathname === "/index.html") {
+        if (prefersMarkdown(req.headers.get("accept"))) {
+          const mdUrl = new URL(req.url);
+          mdUrl.pathname = "/index.md";
+          return env.ASSETS.fetch(new Request(mdUrl.toString(), req));
+        }
+        return env.ASSETS.fetch(req);
+      }
+
       // Tile requests (with or without explicit tileset).
       let m = TILE_WITH_TILESET.exec(url.pathname);
       if (m) {
@@ -710,4 +725,39 @@ async function metadataJson(req: Request, body: unknown): Promise<Response> {
 
 function notFound(message = "Not Found"): Response {
   return new Response(message, { status: 404 });
+}
+
+/**
+ * Decide whether the caller would rather have Markdown than HTML at `/`.
+ * Parses each `Accept` media-range, scores it by `q` (default 1.0), and
+ * compares the best Markdown match against the best HTML match.
+ * `text/markdown` and `text/plain` count as Markdown; `text/html` and
+ * `application/xhtml+xml` count as HTML. Browsers send `text/html` with
+ * `q=1.0`, so they continue to get HTML. AI clients that send
+ * `Accept: text/markdown` (or omit HTML entirely) get the Markdown
+ * variant. Ties resolve to HTML to keep the human-facing default.
+ */
+function prefersMarkdown(accept: string | null): boolean {
+  if (!accept) return false;
+  let bestMarkdown = -1;
+  let bestHtml = -1;
+  for (const part of accept.split(",")) {
+    const [rawType, ...params] = part.split(";").map((s) => s.trim());
+    if (!rawType) continue;
+    const type = rawType.toLowerCase();
+    let q = 1;
+    for (const p of params) {
+      const [k, v] = p.split("=").map((s) => s.trim());
+      if (k?.toLowerCase() === "q" && v) {
+        const n = Number(v);
+        if (Number.isFinite(n)) q = n;
+      }
+    }
+    if (type === "text/markdown" || type === "text/plain") {
+      if (q > bestMarkdown) bestMarkdown = q;
+    } else if (type === "text/html" || type === "application/xhtml+xml") {
+      if (q > bestHtml) bestHtml = q;
+    }
+  }
+  return bestMarkdown > bestHtml;
 }

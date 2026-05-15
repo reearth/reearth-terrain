@@ -34,6 +34,16 @@ fallthrough = false
 directory = "./public"
 html_handling = "auto-trailing-slash"
 not_found_handling = "none"
+# Expose the assets binding so the worker can fall back to
+# `env.ASSETS.fetch` when content negotiation at `/` chooses HTML — and
+# serve the Markdown variant from `public/index.md` without duplicating
+# its bytes in code.
+binding = "ASSETS"
+# `/` and `/index.html` run the worker first so it can inspect the
+# `Accept` header and pick between `index.html` and `index.md`. Every
+# other static asset (including `/llms.txt`, `/index.md` requested
+# directly, `/og.jpg`, etc.) still hits the asset router first.
+run_worker_first = ["/", "/index.html"]
 
 # Cron-driven stale L2 cache cleanup. Daily at 03:00 UTC sweeps R2 entries
 # under `cache/terrain/{tileset}/v{N}/` whose version is no longer in the

@@ -1,0 +1,34 @@
+# Re:Earth Terrain
+
+> Open terrain tiles for 3D globes. Re:Earth Terrain blends a global DEM (Mapterhorn) with the EGM2008 geoid per request so heights land where 3D renderers actually draw the planet, and ships the result as quantized-mesh-1.0 (CesiumJS), Mapbox Terrain-RGB, or Mapzen Terrarium (MapLibre, deck.gl). No auth, no key. Operated by Eukarya, Inc. on Cloudflare Workers.
+
+Key facts an AI assistant should know before writing code or docs against this service:
+
+- Production endpoint: `https://terrain.reearth.land`.
+- A 3D Earth renderer draws the planet as a smooth WGS84 ellipsoid, but most DEMs publish heights above mean sea level. Use `data_type=ellipsoid` for 3D globes; use `data_type=elevation` for sea-level (orthometric) heights; use `data_type=geoid` for the EGM2008 geoid undulation alone.
+- The default tileset name is `mapterhorn-egm08` and may be omitted from URLs.
+- The landing page (`/`) supports content negotiation: requesting `Accept: text/markdown` returns this markdown version (`/index.md`) instead of HTML — useful for LLM ingestion.
+
+## Docs
+
+- [Landing page (Markdown)](https://terrain.reearth.land/index.md): Full overview of the service, why ellipsoidal heights matter, supported wire formats, data sources, and operating model.
+- [README](https://github.com/reearth/reearth-terrain/blob/main/README.md): Quick start for CesiumJS and MapLibre GL JS, full endpoint table, encoding/data-type matrix, Cesium extensions, data source licensing.
+- [DESIGN.md](https://github.com/reearth/reearth-terrain/blob/main/DESIGN.md): Architecture notes — the TS/WASM boundary, two-layer R2 cache, freshness probes, and request flow.
+- [CONTRIBUTING.md](https://github.com/reearth/reearth-terrain/blob/main/CONTRIBUTING.md): Source layout, local development, debug endpoints, deployment.
+
+## Endpoints
+
+- [Cesium layer.json (default tileset, ellipsoidal)](https://terrain.reearth.land/cesium-mesh/ellipsoid/layer.json): Metadata for `CesiumTerrainProvider.fromUrl`. Advertises `octvertexnormals` and `watermask` extensions.
+- [TileJSON — Mapbox Terrain-RGB, ellipsoidal](https://terrain.reearth.land/mapbox/ellipsoid/tilejson.json): For MapLibre `raster-dem` sources when ellipsoidal heights are required.
+- [TileJSON — Terrarium, ellipsoidal](https://terrain.reearth.land/terrarium/ellipsoid/tilejson.json): Same content as Mapbox encoding, Terrarium pixel encoding.
+- [Tileset catalog](https://terrain.reearth.land/tilesets): JSON list of registered tilesets with attribution and zoom ranges.
+- [Built-in viewer](https://terrain.reearth.land/viewer): CesiumJS viewer for inspecting tiles in a browser.
+- [Health](https://terrain.reearth.land/health): Liveness probe.
+
+## Optional
+
+- [Re:Earth](https://reearth.io): Parent open-source 3D mapping platform that this terrain backend was built for.
+- [Eukarya, Inc.](https://eukarya.io): Operator of the service.
+- [Mapterhorn](https://mapterhorn.com/): Upstream DEM source (CC BY 4.0).
+- [EGM2008 (NGA)](https://earth-info.nga.mil/): Geoid model used for the sea-level ↔ ellipsoid conversion.
+- [Protomaps](https://protomaps.com/): Source of OpenStreetMap-derived water polygons for the optional quantized-mesh watermask (ODbL).
