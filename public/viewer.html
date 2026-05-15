@@ -1,0 +1,1024 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>reearth-terrain viewer</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/cesium@latest/Build/Cesium/Widgets/widgets.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/cesium@latest/Build/Cesium/Cesium.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap"
+    />
+    <style>
+      :root {
+        --ink: #14110f;
+        --ink-2: #1d1916;
+        --paper: #faf4e8;
+        --paper-dim: rgba(250, 244, 232, 0.6);
+        --paper-faint: rgba(250, 244, 232, 0.32);
+        --hairline: rgba(250, 244, 232, 0.12);
+        --hairline-strong: rgba(250, 244, 232, 0.28);
+        --accent: #e94e1b;
+        --accent-soft: rgba(233, 78, 27, 0.16);
+        --display: "Bricolage Grotesque", "Hiragino Sans", system-ui, sans-serif;
+        --body: "Hanken Grotesk", system-ui, sans-serif;
+      }
+
+      html,
+      body,
+      #cesium,
+      #maplibre {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+      }
+      body {
+        background: var(--ink);
+        font-family: var(--body);
+        color: var(--paper);
+        -webkit-font-smoothing: antialiased;
+      }
+      #maplibre {
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+      .hidden {
+        display: none !important;
+      }
+
+      #ui {
+        position: absolute;
+        top: 22px;
+        left: 22px;
+        z-index: 10;
+        width: 268px;
+        max-height: calc(100vh - 44px);
+        display: flex;
+        flex-direction: column;
+        background: rgba(14, 18, 24, 0.78);
+        backdrop-filter: blur(14px) saturate(140%);
+        -webkit-backdrop-filter: blur(14px) saturate(140%);
+        color: var(--paper);
+        font-family: var(--body);
+        font-size: 12px;
+        line-height: 1.5;
+        border: 1px solid var(--hairline-strong);
+        box-shadow:
+          0 30px 80px -20px rgba(0, 0, 0, 0.6),
+          0 0 0 1px rgba(0, 0, 0, 0.4),
+          inset 0 1px 0 rgba(236, 228, 208, 0.04);
+      }
+      #ui-body {
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+      #ui-toggle {
+        appearance: none;
+        -webkit-appearance: none;
+        background: transparent;
+        border: 1px solid var(--hairline-strong);
+        color: var(--paper);
+        width: 28px;
+        height: 28px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        line-height: 1;
+        font-family: inherit;
+        transition: color 120ms ease, border-color 120ms ease;
+        flex-shrink: 0;
+      }
+      #ui-toggle:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+      #ui-toggle::before {
+        content: "−";
+      }
+      #ui.collapsed #ui-toggle::before {
+        content: "+";
+      }
+      #ui.collapsed #ui-body {
+        display: none;
+      }
+      #ui.collapsed #ui-header {
+        border-bottom: none;
+      }
+      @media (max-width: 640px) {
+        #ui {
+          top: 0;
+          left: 0;
+          right: 0;
+          width: auto;
+          max-width: none;
+          max-height: 100vh;
+          border-left: none;
+          border-right: none;
+          border-top: none;
+        }
+        #ui-header {
+          padding: 14px 16px 12px;
+        }
+        .section {
+          padding: 12px 16px 14px;
+        }
+        .locations {
+          margin: 12px -16px -14px;
+        }
+      }
+      #ui::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background-image: radial-gradient(
+          circle at 1px 1px,
+          rgba(236, 228, 208, 0.04) 1px,
+          transparent 0
+        );
+        background-size: 4px 4px;
+        opacity: 0.6;
+        mix-blend-mode: overlay;
+      }
+
+      #ui-header {
+        padding: 18px 20px 16px;
+        border-bottom: 1px solid var(--hairline);
+        position: relative;
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      #ui-header .title-block {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      #ui-header .home {
+        color: inherit;
+        text-decoration: none;
+        transition: color 120ms ease;
+      }
+      #ui-header .home:hover {
+        color: var(--accent);
+      }
+      #ui-header h1 {
+        font-family: var(--display);
+        font-weight: 600;
+        font-size: 18px;
+        line-height: 1.1;
+        margin: 0;
+        letter-spacing: -0.01em;
+        color: inherit;
+      }
+      #ui-header .subtitle {
+        font-size: 11px;
+        color: var(--paper-dim);
+        margin-top: 4px;
+      }
+      .section {
+        padding: 14px 20px 16px;
+        border-bottom: 1px solid var(--hairline);
+        position: relative;
+      }
+      .section:last-child {
+        border-bottom: none;
+      }
+      .section-label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--paper-dim);
+        margin: 0 0 12px;
+      }
+      .section-label::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--hairline);
+      }
+      .section-label .index {
+        color: var(--accent);
+        font-weight: 500;
+      }
+
+      /* form fields */
+      .field {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 5px 0;
+        gap: 12px;
+      }
+      .field-label {
+        font-size: 12px;
+        color: var(--paper-dim);
+      }
+      .field select {
+        appearance: none;
+        -webkit-appearance: none;
+        background: transparent;
+        border: none;
+        border-bottom: 1px dotted var(--paper-faint);
+        color: var(--accent);
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 2px 14px 2px 4px;
+        cursor: pointer;
+        text-align: right;
+        background-image: linear-gradient(
+            45deg,
+            transparent 50%,
+            var(--paper-dim) 50%
+          ),
+          linear-gradient(135deg, var(--paper-dim) 50%, transparent 50%);
+        background-position: calc(100% - 6px) 50%, calc(100% - 2px) 50%;
+        background-size: 4px 4px;
+        background-repeat: no-repeat;
+        transition: border-color 120ms ease, color 120ms ease;
+      }
+      .field select:hover,
+      .field select:focus {
+        outline: none;
+        border-bottom-color: var(--accent);
+        color: var(--accent);
+      }
+      .field select option {
+        background: var(--ink-2);
+        color: var(--paper);
+      }
+
+      /* checkboxes */
+      label.check {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 5px 0;
+        cursor: pointer;
+        color: var(--paper);
+        user-select: none;
+        font-size: 12px;
+        transition: color 120ms ease;
+      }
+      label.check:hover {
+        color: var(--accent);
+      }
+      label.check input {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 12px;
+        height: 12px;
+        border: 1px solid var(--paper-faint);
+        background: transparent;
+        position: relative;
+        cursor: pointer;
+        margin: 0;
+        flex-shrink: 0;
+        transition: all 120ms ease;
+      }
+      label.check input:hover {
+        border-color: var(--accent);
+      }
+      label.check input:checked {
+        border-color: var(--accent);
+        background: var(--accent);
+      }
+      label.check input:checked::after {
+        content: "";
+        position: absolute;
+        inset: 2px;
+        background: var(--ink);
+      }
+
+      /* location plaques */
+      .locations {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1px;
+        background: var(--hairline);
+        border-top: 1px solid var(--hairline);
+        margin: 14px -20px -16px;
+      }
+      .locations button {
+        background: rgba(14, 18, 24, 0.55);
+        border: none;
+        color: var(--paper);
+        font-family: inherit;
+        text-align: left;
+        padding: 10px 14px 11px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        transition:
+          background 160ms ease,
+          color 160ms ease;
+      }
+      .locations button:hover {
+        background: var(--accent);
+        color: var(--ink);
+      }
+      .locations button .name {
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .locations button .coord {
+        font-size: 10px;
+        opacity: 0.55;
+      }
+      .locations button:hover .coord {
+        opacity: 0.85;
+      }
+
+      /* MapLibre/Cesium widget overrides — keep our palette consistent */
+      .maplibregl-ctrl-group {
+        background: rgba(14, 18, 24, 0.78) !important;
+        border: 1px solid var(--hairline-strong) !important;
+        box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5) !important;
+        backdrop-filter: blur(14px);
+      }
+      .maplibregl-ctrl-group button {
+        filter: invert(0.92) hue-rotate(180deg);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="ui">
+      <div id="ui-header">
+        <div class="title-block">
+          <a href="/" class="home"><h1>Re:Earth Terrain</h1></a>
+          <div class="subtitle">Tile inspector</div>
+        </div>
+        <button
+          id="ui-toggle"
+          type="button"
+          aria-label="Collapse panel"
+          aria-expanded="true"
+        ></button>
+      </div>
+
+      <div id="ui-body">
+      <div class="section">
+        <div class="section-label"><span>Renderer</span></div>
+        <div class="field">
+          <span class="field-label">Engine</span>
+          <select id="renderer">
+            <option value="cesium" selected>Cesium</option>
+            <option value="maplibre">MapLibre</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="field-label">Basemap</span>
+          <select id="basemap">
+            <option value="esri" selected>Esri Imagery</option>
+            <option value="eox">EOX Sentinel-2</option>
+            <option value="osm">OpenStreetMap</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section" id="cesium-opts">
+        <div class="section-label"><span>Terrain (Cesium)</span></div>
+        <div class="field" id="row-datatype">
+          <span class="field-label">Datum</span>
+          <select id="datatype">
+            <option value="ellipsoid" selected>Ellipsoid</option>
+            <option value="elevation">Elevation</option>
+            <option value="geoid">Geoid</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label"><span>Scene</span></div>
+        <label class="check" id="opt-normals"
+          ><input type="checkbox" id="normals" checked /><span
+            >Vertex normals</span
+          ></label
+        >
+        <label class="check" id="opt-watermask"
+          ><input type="checkbox" id="watermask" checked /><span
+            >Water mask</span
+          ></label
+        >
+        <label class="check"
+          ><input type="checkbox" id="lighting" checked /><span
+            id="lighting-label"
+            >Sun lighting</span
+          ></label
+        >
+      </div>
+
+      <div class="section">
+        <div class="section-label"><span>Locations</span></div>
+        <div class="locations">
+          <button data-loc="138.7274,35.36,15000">
+            <span class="name">Mt Fuji</span>
+            <span class="coord">35.36°N · 138.73°E</span>
+          </button>
+          <button data-loc="6.50,46.40,10000">
+            <span class="name">Lake Geneva</span>
+            <span class="coord">46.40°N · 6.50°E</span>
+          </button>
+          <button data-loc="4.90,52.37,8000">
+            <span class="name">Amsterdam</span>
+            <span class="coord">52.37°N · 4.90°E</span>
+          </button>
+          <button data-loc="-69.50,-15.75,12000">
+            <span class="name">Lake Titicaca</span>
+            <span class="coord">15.75°S · 69.50°W</span>
+          </button>
+          <button data-loc="-117.00,36.50,8000">
+            <span class="name">Death Valley</span>
+            <span class="coord">36.50°N · 117.00°W</span>
+          </button>
+          <button data-loc="86.93,27.99,15000">
+            <span class="name">Everest</span>
+            <span class="coord">27.99°N · 86.93°E</span>
+          </button>
+        </div>
+      </div>
+      </div>
+    </div>
+    <div id="cesium"></div>
+    <div id="maplibre" class="hidden"></div>
+    <script>
+      // ?nopanel (or ?ui=0) hides the control panel — useful for embeds
+      // and screenshots. ?demo orbits Mt Fuji indefinitely.
+      // ?plateau loads PLATEAU LOD1 building 3D Tiles on the Cesium
+      // scene only (silently no-op on MapLibre). Undocumented and
+      // for ad-hoc demos; depends on the MLIT-operated PLATEAU API,
+      // which has no SLA.
+      const QUERY = new URLSearchParams(location.search);
+      const DEMO = QUERY.has("demo");
+      const PLATEAU = QUERY.has("plateau");
+
+      // Visibility gating. The landing page sends
+      // { type: "reearth-terrain:visibility", visible: boolean }
+      // when the hero iframe enters or leaves the viewport. While
+      // hidden we stop the demo orbit's rAF tick and disable the
+      // Cesium render loop entirely — no rAF tax, no GPU work.
+      let demoVisible = true;
+      let demoRafId = null;
+      if (QUERY.has("nopanel") || QUERY.get("ui") === "0" || DEMO) {
+        document.getElementById("ui").classList.add("hidden");
+      }
+      if (PLATEAU) {
+        // PLATEAU 3D Tiles use ellipsoidal heights (WGS84), which is
+        // exactly the pairing Re:Earth Terrain is built for — the
+        // default Ellipsoid datum lines the buildings up on the
+        // terrain out of the box. Switching to Elevation will sink
+        // the buildings ~40 m underground in Tokyo, which is a fine
+        // way to *see* what this service fixes.
+        console.info(
+          "[?plateau] PLATEAU LOD1 buildings enabled (Cesium only). " +
+            "Keep the default 'Ellipsoid' datum for correct alignment.",
+        );
+      }
+
+      const params = () => ({
+        renderer: document.getElementById("renderer").value,
+        basemap: document.getElementById("basemap").value,
+        normals: document.getElementById("normals").checked,
+        watermask: document.getElementById("watermask").checked,
+        lighting: document.getElementById("lighting").checked,
+        dt: document.getElementById("datatype").value,
+      });
+
+      // Basemap registry. Each entry carries everything both renderers
+      // need: the XYZ-style URL template, a maximum zoom, and the
+      // attribution strings (HTML for MapLibre, plain for Cesium credits).
+      const BASEMAPS = {
+        osm: {
+          url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+          maxzoom: 19,
+          attributionHtml:
+            '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+          credit: "© OpenStreetMap contributors",
+        },
+        eox: {
+          url:
+            "https://tiles.maps.eox.at/wmts?layer=s2cloudless-2020_3857&style=default" +
+            "&tilematrixset=g&Service=WMTS&Request=GetTile" +
+            "&Version=1.0.0&Format=image%2Fjpeg" +
+            "&TileMatrix={z}&TileCol={x}&TileRow={y}",
+          maxzoom: 16,
+          attributionHtml:
+            '<a href="https://s2maps.eu">Sentinel-2 cloudless 2020</a> by <a href="https://eox.at">EOX IT Services GmbH</a> (contains modified Copernicus Sentinel data 2020)',
+          credit:
+            "Sentinel-2 cloudless 2020 by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2020)",
+        },
+        esri: {
+          // ArcGIS REST tile path is /tile/{level}/{row}/{col} — match
+          // that ordering when substituting MapLibre's placeholders.
+          url:
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+          maxzoom: 19,
+          attributionHtml:
+            'Tiles © <a href="https://www.esri.com/">Esri</a> — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+          credit:
+            "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+        },
+      };
+      const basemap = () => BASEMAPS[params().basemap] || BASEMAPS.esri;
+
+      // Last camera target so renderer switches keep the view.
+      let lastView = DEMO
+        ? { lon: 138.7274, lat: 35.36, range: 18000 }
+        : PLATEAU
+          ? { lon: 139.767, lat: 35.681, range: 3000 } // Tokyo Station, close enough to see LOD1 blocks
+          : { lon: 138.7274, lat: 35.36, range: 15000 };
+
+      let viewer = null;
+      let map = null;
+
+      function syncUiForRenderer(renderer) {
+        const cesiumOnly = renderer === "cesium";
+        document
+          .getElementById("cesium-opts")
+          .classList.toggle("hidden", !cesiumOnly);
+        document
+          .getElementById("opt-normals")
+          .classList.toggle("hidden", !cesiumOnly);
+        document
+          .getElementById("opt-watermask")
+          .classList.toggle("hidden", !cesiumOnly);
+        document.getElementById("lighting-label").textContent =
+          cesiumOnly ? "Sun lighting" : "Hillshade";
+        document
+          .getElementById("cesium")
+          .classList.toggle("hidden", renderer !== "cesium");
+        document
+          .getElementById("maplibre")
+          .classList.toggle("hidden", renderer !== "maplibre");
+      }
+
+      // Post a one-shot message to the parent window when the visible
+      // viewport finishes loading its initial tile batch. Useful for
+      // iframe embeds that need to fade out a loading state.
+      function notifyOnTilesLoaded(renderer) {
+        const send = () => {
+          const payload = { type: "reearth-terrain:ready", renderer };
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage(payload, "*");
+          }
+          window.dispatchEvent(
+            new CustomEvent("reearth-terrain:ready", { detail: payload }),
+          );
+        };
+        if (renderer === "cesium") {
+          let sawPending = false;
+          const ev = viewer.scene.globe.tileLoadProgressEvent;
+          const off = ev.addEventListener((pending) => {
+            if (pending > 0) {
+              sawPending = true;
+            } else if (sawPending) {
+              off();
+              send();
+            }
+          });
+        } else if (renderer === "maplibre") {
+          if (map.areTilesLoaded()) {
+            send();
+          } else {
+            map.once("idle", send);
+          }
+        }
+      }
+
+      // Demo mode owns the camera, so disable user gestures that would
+      // fight the rAF loop.
+      function lockCamera() {
+        if (viewer) {
+          viewer.scene.screenSpaceCameraController.enableInputs = false;
+        }
+        if (map) {
+          map.dragPan.disable();
+          map.dragRotate.disable();
+          map.scrollZoom.disable();
+          map.boxZoom.disable();
+          map.doubleClickZoom.disable();
+          map.touchZoomRotate.disable();
+          map.touchPitch?.disable?.();
+          map.keyboard.disable();
+        }
+      }
+
+      // Per-renderer camera snapshots so option toggles (which rebuild
+      // the viewer) don't snap the camera back to the default view.
+      // Cross-renderer switches fall back to `lastView`.
+      let cesiumSnap = null;
+      let mapSnap = null;
+
+      function destroyAll() {
+        if (viewer && !viewer.isDestroyed()) {
+          cesiumSnap = {
+            destination: viewer.camera.position.clone(),
+            heading: viewer.camera.heading,
+            pitch: viewer.camera.pitch,
+            roll: viewer.camera.roll,
+          };
+          viewer.destroy();
+          viewer = null;
+        }
+        if (map) {
+          const c = map.getCenter();
+          mapSnap = {
+            center: [c.lng, c.lat],
+            zoom: map.getZoom(),
+            bearing: map.getBearing(),
+            pitch: map.getPitch(),
+          };
+          map.remove();
+          map = null;
+        }
+      }
+
+      // Convert a Cesium bounding-sphere range (meters) into an approximate
+      // MapLibre zoom for the same on-screen extent. Cesium's default FOV is
+      // ~60° vertical; one meter at zoom z and latitude lat covers
+      // 156543.03 * cos(lat) / 2^z meters per pixel.
+      function rangeToZoom(lat, range) {
+        const h = window.innerHeight || 800;
+        const visibleMeters = 2 * range * Math.tan(Math.PI / 6);
+        const mpp = visibleMeters / h;
+        return Math.log2(
+          (156543.03392 * Math.cos((lat * Math.PI) / 180)) / mpp,
+        );
+      }
+
+      async function buildMapLibre() {
+        const { lighting } = params();
+        const style = {
+          version: 8,
+          sources: {
+            basemap: {
+              type: "raster",
+              tiles: [basemap().url],
+              tileSize: 256,
+              attribution: basemap().attributionHtml,
+              maxzoom: basemap().maxzoom,
+            },
+            dem: {
+              type: "raster-dem",
+              url: `${location.origin}/terrarium/elevation/tilejson.json`,
+              encoding: "terrarium",
+              // The TileJSON also advertises this, but MapLibre's
+              // raster-dem source doesn't reliably surface it through
+              // AttributionControl, so set it explicitly here.
+              attribution:
+                '<a href="https://mapterhorn.com">Mapterhorn</a> | <a href="https://earth-info.nga.mil/">EGM2008 (NGA)</a>',
+            },
+          },
+          layers: [
+            { id: "basemap", type: "raster", source: "basemap" },
+            {
+              id: "hillshade",
+              type: "hillshade",
+              source: "dem",
+              layout: { visibility: lighting ? "visible" : "none" },
+              paint: {
+                "hillshade-exaggeration": 0.5,
+                "hillshade-shadow-color": "#000000",
+                "hillshade-highlight-color": "#ffffff",
+              },
+            },
+          ],
+          terrain: { source: "dem" },
+        };
+        const initial =
+          mapSnap && !DEMO
+            ? mapSnap
+            : {
+                center: [lastView.lon, lastView.lat],
+                zoom: rangeToZoom(lastView.lat, lastView.range),
+                pitch: 60,
+                bearing: 0,
+              };
+        map = new maplibregl.Map({
+          container: "maplibre",
+          style,
+          ...initial,
+          maxPitch: 85,
+        });
+        window.map = map;
+        await new Promise((r) => map.once("load", r));
+        if (DEMO) lockCamera();
+        notifyOnTilesLoaded("maplibre");
+      }
+
+      async function build() {
+        destroyAll();
+        const { renderer, normals, watermask, lighting, dt } = params();
+        syncUiForRenderer(renderer);
+        try {
+          if (renderer === "maplibre") {
+            await buildMapLibre();
+            return;
+          }
+          const terrain = await Cesium.CesiumTerrainProvider.fromUrl(
+            `${location.origin}/cesium-mesh/${dt}`,
+            {
+              requestVertexNormals: normals,
+              requestWaterMask: watermask,
+            },
+          );
+          const b = basemap();
+          const imagery = new Cesium.UrlTemplateImageryProvider({
+            url: b.url,
+            credit: b.credit,
+            maximumLevel: b.maxzoom,
+          });
+          viewer = new Cesium.Viewer("cesium", {
+            terrainProvider: terrain,
+            baseLayer: Cesium.ImageryLayer.fromProviderAsync(
+              Promise.resolve(imagery),
+            ),
+            baseLayerPicker: false,
+            timeline: false,
+            animation: false,
+            geocoder: false,
+            sceneModePicker: false,
+            navigationHelpButton: false,
+            homeButton: false,
+            fullscreenButton: false,
+          });
+          viewer.scene.globe.enableLighting = lighting;
+          viewer.scene.globe.showWaterEffect = watermask;
+
+          // Skip GPU work whenever the scene is static. With
+          // maximumRenderTimeChange = Infinity, Cesium no longer
+          // re-renders on simulation-time drift either (the sun
+          // position is pinned per session, so there's nothing to
+          // tick for). Camera changes — including the demo orbit's
+          // lookAt() calls — still mark the scene dirty and trigger
+          // the next frame.
+          viewer.scene.requestRenderMode = true;
+          viewer.scene.maximumRenderTimeChange = Infinity;
+          // Honor the most recent visibility message: if the parent
+          // already told us we're off-screen, don't start ticking.
+          viewer.useDefaultRenderLoop = demoVisible;
+
+          // ?plateau — hidden feature. Drape PLATEAU LOD1 building 3D
+          // Tiles over the terrain. Composite "all-bldg-lod1-latest"
+          // covers every Japanese municipality with PLATEAU data,
+          // each at its most recent build year. Service runs at
+          // api.plateauview.mlit.go.jp with no SLA — failures don't
+          // affect the rest of the scene.
+          if (PLATEAU) {
+            Cesium.Cesium3DTileset.fromUrl(
+              "https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/all-bldg-lod1-latest/tileset.json",
+            )
+              .then((tileset) => {
+                if (!viewer || viewer.isDestroyed()) return;
+                viewer.scene.primitives.add(tileset);
+              })
+              .catch((err) => console.warn("PLATEAU tileset load failed", err));
+          }
+
+          // Atmosphere & sky polish — Cesium ships these on but muted.
+          // Bump intensities so the limb glows and distant terrain hazes
+          // out naturally. Demo mode pushes them further for a more
+          // cinematic look.
+          const scene = viewer.scene;
+          scene.skyAtmosphere.show = true;
+          scene.fog.enabled = true;
+          scene.globe.showGroundAtmosphere = true;
+          if (DEMO) {
+            scene.skyAtmosphere.brightnessShift = 0.55;
+            scene.skyAtmosphere.saturationShift = 0.45;
+            scene.fog.density = 1e-3;
+            scene.globe.atmosphereLightIntensity = 70;
+            // SunLight default intensity is 2.0 — push hard for strong
+            // direct illumination on lit slopes.
+            scene.light = new Cesium.SunLight({ intensity: 7 });
+            const layer = viewer.imageryLayers.get(0);
+            if (layer) {
+              layer.brightness = 2.1;
+              layer.contrast = 1.15;
+              layer.gamma = 0.7;
+            }
+          } else {
+            scene.skyAtmosphere.brightnessShift = 0.1;
+            scene.skyAtmosphere.saturationShift = 0.1;
+            scene.fog.density = 3e-4;
+            scene.globe.atmosphereLightIntensity = 15;
+          }
+
+          // Expose for ad-hoc DevTools debugging.
+          window.viewer = viewer;
+          if (cesiumSnap && !DEMO) {
+            viewer.camera.setView({
+              destination: cesiumSnap.destination,
+              orientation: {
+                heading: cesiumSnap.heading,
+                pitch: cesiumSnap.pitch,
+                roll: cesiumSnap.roll,
+              },
+            });
+            alignSunToLongitude(
+              Cesium.Math.toDegrees(
+                Cesium.Cartographic.fromCartesian(cesiumSnap.destination)
+                  .longitude,
+              ),
+            );
+          } else {
+            flyTo(lastView.lon, lastView.lat, lastView.range, false);
+          }
+          if (DEMO) lockCamera();
+          notifyOnTilesLoaded("cesium");
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      // Cesium uses real-world time for its sun-position calculation, so
+      // with enableLighting=true the imagery goes black whenever the
+      // viewer's current location is on the night side. For a debug
+      // viewer that doesn't help — pin the simulated time to a chosen
+      // local hour at the target longitude so the sun is always up.
+      // Demo mode uses an earlier hour (low sun) for dramatic
+      // raking light on Mt Fuji as the camera orbits.
+      function alignSunToLongitude(lon, localHour = DEMO ? 7 : 9) {
+        if (!viewer) return;
+        const utcHours = (localHour - lon / 15 + 24) % 24;
+        const h = Math.floor(utcHours);
+        const m = Math.floor((utcHours - h) * 60);
+        const today = new Date();
+        const iso = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, "0")}-${String(today.getUTCDate()).padStart(2, "0")}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`;
+        viewer.clock.shouldAnimate = false;
+        viewer.clock.currentTime = Cesium.JulianDate.fromDate(new Date(iso));
+      }
+
+      function flyTo(lon, lat, range, animate = true) {
+        lastView = { lon, lat, range };
+        if (viewer) {
+          alignSunToLongitude(lon);
+          viewer.camera.flyToBoundingSphere(
+            new Cesium.BoundingSphere(
+              Cesium.Cartesian3.fromDegrees(lon, lat, 0),
+              range,
+            ),
+            {
+              offset: new Cesium.HeadingPitchRange(
+                0,
+                Cesium.Math.toRadians(-30),
+                range,
+              ),
+              duration: animate ? 1.5 : 0,
+            },
+          );
+        }
+        if (map) {
+          const view = {
+            center: [lon, lat],
+            zoom: rangeToZoom(lat, range),
+            pitch: 60,
+            bearing: 0,
+          };
+          if (animate) map.flyTo({ ...view, duration: 1500 });
+          else map.jumpTo(view);
+        }
+      }
+
+      // Lighting/hillshade is a scene flag in both renderers — no rebuild
+      // needed when toggled.
+      document.getElementById("lighting").addEventListener("change", (e) => {
+        if (viewer) viewer.scene.globe.enableLighting = e.target.checked;
+        if (map && map.getLayer("hillshade")) {
+          map.setLayoutProperty(
+            "hillshade",
+            "visibility",
+            e.target.checked ? "visible" : "none",
+          );
+        }
+      });
+      document
+        .querySelectorAll("#ui input, #ui select")
+        .forEach((el) => {
+          if (el.id === "lighting") return;
+          el.addEventListener("change", build);
+        });
+      document
+        .querySelectorAll("#ui button[data-loc]")
+        .forEach((b) =>
+          b.addEventListener("click", () => {
+            const [lon, lat, h] = b.dataset.loc.split(",").map(Number);
+            flyTo(lon, lat, h);
+          }),
+        );
+
+      // Collapse / expand the panel. On small screens the panel can take
+      // most of the viewport, so users need a way to get it out of the way.
+      // Default to collapsed on phone-width viewports so the map is visible
+      // first; users tap the toggle to reveal controls.
+      const uiEl = document.getElementById("ui");
+      const uiToggle = document.getElementById("ui-toggle");
+      function setCollapsed(collapsed) {
+        uiEl.classList.toggle("collapsed", collapsed);
+        uiToggle.setAttribute("aria-expanded", String(!collapsed));
+        uiToggle.setAttribute(
+          "aria-label",
+          collapsed ? "Expand panel" : "Collapse panel",
+        );
+      }
+      if (window.matchMedia("(max-width: 640px)").matches) {
+        setCollapsed(true);
+      }
+      uiToggle.addEventListener("click", () => {
+        setCollapsed(!uiEl.classList.contains("collapsed"));
+      });
+
+      // ?demo: orbit Mt Fuji indefinitely. The rAF loop reads `viewer`
+      // and `map` fresh each frame, so renderer switches keep working.
+      // The orbit pauses when the hero is scrolled off-screen — tick
+      // checks `demoVisible` and bails, releasing the rAF chain.
+      function startDemoLoop() {
+        if (!DEMO) return;
+        if (demoRafId !== null) return;
+        if (!demoVisible) return;
+        const center = { lon: 138.7274, lat: 35.36 };
+        const range = 18000;
+        const pitchDeg = -30;
+        const periodMs = 40000;
+        const start = performance.now();
+        function tick(now) {
+          if (!demoVisible) {
+            demoRafId = null;
+            return;
+          }
+          const headingDeg = (((now - start) % periodMs) / periodMs) * 360;
+          if (viewer && !viewer.isDestroyed()) {
+            viewer.camera.lookAt(
+              Cesium.Cartesian3.fromDegrees(center.lon, center.lat, 0),
+              new Cesium.HeadingPitchRange(
+                Cesium.Math.toRadians(headingDeg),
+                Cesium.Math.toRadians(pitchDeg),
+                range,
+              ),
+            );
+          }
+          if (map) {
+            map.setBearing(headingDeg);
+          }
+          demoRafId = requestAnimationFrame(tick);
+        }
+        demoRafId = requestAnimationFrame(tick);
+      }
+
+      // Parent (landing page) drives this via IntersectionObserver on
+      // the iframe; standalone /viewer never sends it, so the default
+      // demoVisible=true keeps everything running.
+      window.addEventListener("message", (e) => {
+        if (e.data?.type !== "reearth-terrain:visibility") return;
+        const visible = !!e.data.visible;
+        if (visible === demoVisible) return;
+        demoVisible = visible;
+        if (viewer && !viewer.isDestroyed()) {
+          viewer.useDefaultRenderLoop = visible;
+        }
+        if (visible) startDemoLoop();
+      });
+
+      // Notify a parent frame (e.g. the landing page) when the viewer is
+      // wired up, so it can fade in the iframe and drop its spinner. Fired
+      // once per build() resolution; the parent treats it as "good enough
+      // to show". No-op when the viewer is opened standalone.
+      function notifyReady() {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage(
+            { type: "reearth-terrain:ready", renderer: params().renderer },
+            "*",
+          );
+        }
+      }
+
+      build().then(() => {
+        notifyReady();
+        startDemoLoop();
+      });
+    </script>
+  </body>
+</html>

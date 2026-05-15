@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!--
+    Re:Earth Terrain favicon — akafuji (Hokusai's red Mt. Fuji)
+    sitting on a globe horizon. Transparent background.
+  -->
+  <!-- mountain body: convex slopes, peak slightly left of center -->
+  <path
+    fill="#C8372D"
+    d="M 2 52
+       C 16 52, 22 38, 28 12
+       C 30 6, 32 2, 34 2
+       C 36 2, 38 6, 40 14
+       C 46 38, 52 52, 62 52
+       Z"
+  />
+  <!-- snow cap with characteristic Hokusai drips -->
+  <path
+    fill="#FAF4E8"
+    d="M 28 12
+       C 30 6, 32 2, 34 2
+       C 36 2, 38 6, 40 14
+       L 39 18 L 37 12 L 35 20 L 33 11 L 31 19 L 29 14 Z"
+  />
+  <!-- globe horizon arc beneath -->
+  <path
+    fill="none"
+    stroke="#C8372D"
+    stroke-width="2.5"
+    stroke-linecap="round"
+    d="M 2 55 Q 32 58.5, 62 55"
+  />
+</svg>

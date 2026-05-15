@@ -1,0 +1,60 @@
+name = "reearth-terrain"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Re:Earth Cloudflare account. Pin so deploys don't go to whatever the
+# logged-in user's default account happens to be.
+account_id = "6bec0134af3a47eff814c2581f42993f"
+
+# Custom domain — assumes the reearth.land zone lives in the same
+# account and `terrain` is reserved for this worker only.
+routes = [{ pattern = "terrain.reearth.land", custom_domain = true }]
+
+# Workers Observability: structured logs + invocation metrics retained
+# server-side. Cheap, lets us debug production tile generation issues
+# without having to tail logs manually.
+[observability]
+enabled = true
+
+# Rules for non-JS module imports.
+# .wasm is handled by wrangler automatically, but we declare it explicitly
+# to keep behavior stable across versions.
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = false
+
+# Static assets (landing page, viewer page, images, favicon) ship from
+# `public/`. Requests are matched against assets first; anything that
+# doesn't resolve to a file falls through to the worker for tile
+# generation. `auto-trailing-slash` makes `/viewer` resolve to
+# `public/viewer.html`, and `/` resolves to `public/index.html`.
+[assets]
+directory = "./public"
+html_handling = "auto-trailing-slash"
+not_found_handling = "none"
+
+# Cron-driven stale L2 cache cleanup. Daily at 03:00 UTC sweeps R2 entries
+# under `cache/terrain/{tileset}/v{N}/` whose version is no longer in the
+# TILESETS registry. See `src/cleanup.ts`.
+[triggers]
+crons = ["0 3 * * *"]
+
+# --- bindings ---
+# Single R2 bucket holds both source data (sources/...) and generated
+# tile cache (cache/...). Prefixes keep the two namespaces separate
+# so a future split is just a key rename.
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "reearth-terrain"
+
+[vars]
+ENVIRONMENT = "production"
+# Skip the two-layer tile cache entirely when "1"/"true". `.dev.vars`
+# overrides this to "1" for local iteration so a normals tweak in
+# WASM doesn't get masked by a stale R2 entry.
+DISABLE_CACHE = ""
+# `/debug/*` introspection endpoints are off in production. `.dev.vars`
+# flips this to "1" so they're reachable during local development only.
+ENABLE_DEBUG = ""

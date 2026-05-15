@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Cancel in-flight runs of the same branch/PR — pushes during a build are
+# common and the second one supersedes the first.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: typecheck + wasm + wrangler dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Rust toolchain. `rust-toolchain.toml` pins channel + target.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Cache cargo registry, git, and the workspace target dir. The
+      # release-profile wasm build is the slowest single step, so the
+      # target cache is what actually matters here.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # wasm-pack ships a stale wasm-opt; we use the system one. Install
+      # binaryen so build-wasm.mjs can find it (matches local setup).
+      - name: Install binaryen (wasm-opt)
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.14.0 --locked
+
+      - uses: actions/setup-node@v4
+        with:
+          # wrangler 4.x requires Node 22+
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build WASM
+        run: npm run build:wasm
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      # vitest runs inside workerd via @cloudflare/vitest-pool-workers, so it
+      # depends on the WASM artifacts built in the step above. The `test`
+      # script itself is just `vitest run` — no implicit rebuild.
+      - name: Unit tests (vitest)
+        run: npm test
+
+      # wrangler deploy --dry-run doubles as a bundle-size / config sanity
+      # check; it fails the build on missing bindings, oversized payload,
+      # or syntax errors the typecheck wouldn't catch (e.g. asset rules).
+      - name: Wrangler dry-run
+        run: npx wrangler deploy --dry-run --outdir dist
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || 'dry-run-noop' }}
+
+  cargo-test:
+    name: cargo test (terrain-codec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-test-${{ runner.os }}-
+      - run: cargo test --manifest-path crates/terrain-codec/Cargo.toml --lib --release
+
+  deploy:
+    name: Deploy (Cloudflare Workers)
+    needs: [build, cargo-test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Use a GitHub Environment so the CLOUDFLARE_API_TOKEN can be scoped
+    # to main-branch deploys and (optionally) gated by required reviewers.
+    environment: production
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install binaryen (wasm-opt)
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.14.0 --locked
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build WASM
+        run: npm run build:wasm
+
+      # wrangler.toml pins account_id and the R2 bucket name, so the only
+      # thing CI needs to supply is the API token. No config rewriting.
+      - name: Wrangler deploy
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

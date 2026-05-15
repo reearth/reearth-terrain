@@ -1,0 +1,1399 @@
+<!doctype html>
+<html lang="en" data-palette="alpha">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Re:Earth Terrain</title>
+    <meta
+      name="description"
+      content="Open terrain tiles for 3D globes. Quantized-mesh and raster-DEM endpoints for CesiumJS, MapLibre, and anything else that speaks the standards."
+    />
+    <link rel="canonical" href="https://terrain.reearth.land/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#c8372d" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Re:Earth Terrain" />
+    <meta property="og:title" content="Re:Earth Terrain" />
+    <meta
+      property="og:description"
+      content="Open terrain tiles for 3D globes. Quantized-mesh and raster-DEM endpoints for CesiumJS, MapLibre, and anything else that speaks the standards."
+    />
+    <meta property="og:url" content="https://terrain.reearth.land/" />
+    <meta property="og:image" content="https://terrain.reearth.land/og.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Re:Earth Terrain — a 3D-rendered red Mt. Fuji rising from elevation tiles."
+    />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Re:Earth Terrain" />
+    <meta
+      name="twitter:description"
+      content="Open terrain tiles for 3D globes. Quantized-mesh and raster-DEM endpoints for CesiumJS, MapLibre, and anything else that speaks the standards."
+    />
+    <meta name="twitter:image" content="https://terrain.reearth.land/og.jpg" />
+    <meta
+      name="twitter:image:alt"
+      content="Re:Earth Terrain — a 3D-rendered red Mt. Fuji rising from elevation tiles."
+    />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* ----- palettes ----- */
+      :root[data-palette="alpha"] {
+        /* Akafuji Atlas */
+        --red: #c8372d;
+        --paper: #faf4e8;
+        --ink: #14110f;
+        --accent: #14110f;
+        --hero-fg: #faf4e8;
+        --globe-tint: 200 55 45;
+      }
+      :root[data-palette="gamma"] {
+        /* Sumi Akafuji */
+        --red: #d94436;
+        --paper: #2b1810;
+        --ink: #f4efe7;
+        --accent: #d4a04a;
+        --hero-fg: #f4efe7;
+        --globe-tint: 217 68 54;
+      }
+
+      :root {
+        --display: "Bricolage Grotesque", "Hiragino Sans", system-ui, sans-serif;
+        --body: "Hanken Grotesk", system-ui, sans-serif;
+        --mono: "JetBrains Mono", ui-monospace, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--body);
+        font-size: 16px;
+        line-height: 1.5;
+        transition:
+          background 320ms ease,
+          color 320ms ease;
+        scroll-behavior: smooth;
+      }
+
+      /* ----- theme toggle ----- */
+      .theme-toggle {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 100;
+        display: flex;
+        gap: 2px;
+        padding: 4px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+      .theme-toggle button {
+        appearance: none;
+        border: 0;
+        cursor: pointer;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: rgba(255, 255, 255, 0.72);
+        background: transparent;
+        transition:
+          color 200ms ease,
+          background 200ms ease;
+      }
+      .theme-toggle button:hover {
+        color: #fff;
+      }
+      .theme-toggle button[aria-pressed="true"] {
+        background: var(--red);
+        color: #fff;
+      }
+      .theme-toggle svg {
+        width: 18px;
+        height: 18px;
+        display: block;
+      }
+
+      /* ----- hero ----- */
+      .hero {
+        position: relative;
+        height: 100vh;
+        overflow: hidden;
+        background: #000;
+      }
+      .hero #globe {
+        position: absolute;
+        inset: 0;
+        border: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      #cover {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        background: #000 url("/hero.jpg") center/cover no-repeat;
+        pointer-events: none;
+        transition: opacity 700ms ease;
+      }
+      #cover.gone {
+        opacity: 0;
+      }
+      /* On phones we never load Cesium — the cover stays opaque as
+         the permanent hero image. */
+      .hero.no-globe #cover {
+        transition: none;
+      }
+      .hero-shade {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(
+            120% 80% at 20% 50%,
+            rgb(var(--globe-tint) / 0.18),
+            transparent 60%
+          ),
+          linear-gradient(
+            to bottom,
+            rgba(0, 0, 0, 0) 60%,
+            rgba(0, 0, 0, 0.45) 100%
+          );
+        pointer-events: none;
+      }
+      .hero-content {
+        position: relative;
+        z-index: 2;
+        height: 100%;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        padding: 64px;
+      }
+      .hero-title {
+        font-family: var(--display);
+        font-weight: 500;
+        font-size: clamp(4rem, 14vw, 14rem);
+        line-height: 0.88;
+        letter-spacing: -0.045em;
+        color: var(--hero-fg);
+        max-width: 12ch;
+        margin: 0;
+        text-shadow: 0 4px 40px rgba(0, 0, 0, 0.35);
+      }
+      .hero-title em {
+        font-style: italic;
+        font-weight: 400;
+        color: var(--red);
+      }
+      .hero-footer {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 32px;
+      }
+      .hero-tag {
+        font-family: var(--body);
+        font-size: 15px;
+        line-height: 1.4;
+        max-width: 38ch;
+        color: rgba(255, 255, 255, 0.85);
+        text-shadow: 0 1px 12px rgba(0, 0, 0, 0.4);
+      }
+      .hero-cta {
+        display: flex;
+        gap: 12px;
+      }
+      .btn {
+        appearance: none;
+        border: 0;
+        cursor: pointer;
+        font-family: var(--body);
+        font-weight: 500;
+        font-size: 14px;
+        padding: 14px 22px;
+        border-radius: 999px;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: transform 200ms ease, background 200ms ease;
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+      .btn-primary {
+        background: var(--red);
+        color: var(--hero-fg);
+      }
+      .btn-ghost {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--hero-fg);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        backdrop-filter: blur(8px);
+      }
+      .btn-ghost:hover {
+        background: rgba(255, 255, 255, 0.16);
+      }
+
+      /* ----- quick start section (red band) ----- */
+      .quickstart {
+        background: var(--red);
+        color: var(--hero-fg);
+        padding: 120px 64px;
+      }
+      .quickstart-h {
+        font-family: var(--display);
+        font-size: clamp(2.5rem, 7vw, 6rem);
+        font-weight: 500;
+        line-height: 0.92;
+        letter-spacing: -0.035em;
+        margin: 0 0 32px;
+        max-width: 18ch;
+      }
+      .quickstart-lede {
+        font-size: 18px;
+        line-height: 1.55;
+        max-width: 56ch;
+        margin: 0 0 56px;
+        opacity: 0.92;
+      }
+      .copy-btn {
+        appearance: none;
+        border: 0;
+        cursor: pointer;
+        font-family: var(--body);
+        font-weight: 500;
+        font-size: 12px;
+        background: var(--hero-fg);
+        color: var(--red);
+        padding: 6px 14px;
+        border-radius: 999px;
+        transition: opacity 200ms ease;
+      }
+      .copy-btn:hover {
+        opacity: 0.85;
+      }
+      .code-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 28px;
+        max-width: 1500px;
+      }
+      @media (max-width: 1200px) {
+        .code-grid {
+          grid-template-columns: 1fr 1fr;
+          gap: 32px;
+        }
+      }
+      @media (max-width: 760px) {
+        .code-grid {
+          grid-template-columns: 1fr;
+          gap: 40px;
+        }
+      }
+      .code-col {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .code-col-eyebrow {
+        font-family: var(--display);
+        font-style: italic;
+        font-weight: 400;
+        font-size: 14px;
+        opacity: 0.85;
+        margin-bottom: 8px;
+      }
+      .code-col-h {
+        font-family: var(--display);
+        font-size: 22px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        line-height: 1.2;
+        margin: 0 0 10px;
+      }
+      .code-col-d {
+        font-size: 14px;
+        line-height: 1.55;
+        opacity: 0.88;
+        margin: 0 0 18px;
+        flex: 0 0 auto;
+      }
+      .code-col-d code {
+        font-family: var(--mono);
+        font-size: 0.92em;
+        background: rgba(0, 0, 0, 0.18);
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+      .code-col .code-block {
+        flex: 1;
+        max-width: none;
+      }
+      .code-block {
+        background: var(--paper);
+        color: var(--ink);
+        border-radius: 16px;
+        padding: 28px 32px;
+        max-width: 720px;
+        font-family: var(--mono);
+        font-size: 14px;
+        line-height: 1.7;
+        position: relative;
+      }
+      .code-block pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .code-block .copy-btn {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+        background: var(--red);
+        color: var(--hero-fg);
+      }
+      .code-block .kw {
+        color: var(--accent);
+        font-weight: 500;
+      }
+      .code-block .str {
+        color: var(--red);
+      }
+      .code-block .cm {
+        opacity: 0.5;
+      }
+
+      /* ----- features section (paper) ----- */
+      .features {
+        background: var(--paper);
+        color: var(--ink);
+        padding: 120px 64px;
+      }
+      .features-top {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 40px;
+        margin: 0 0 72px;
+        max-width: 1400px;
+      }
+      @media (min-width: 1000px) {
+        .features-top {
+          grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+          gap: 56px;
+          align-items: center;
+        }
+      }
+      .features-h {
+        font-family: var(--display);
+        font-weight: 500;
+        font-size: clamp(2rem, 5vw, 4rem);
+        line-height: 0.95;
+        letter-spacing: -0.035em;
+        margin: 0 0 24px;
+        max-width: 20ch;
+      }
+      .features-h em {
+        font-style: italic;
+        font-weight: 400;
+        color: var(--red);
+      }
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 48px;
+        max-width: 1200px;
+      }
+      .feature {
+        border-top: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+        padding-top: 20px;
+      }
+      .feature-num {
+        font-family: var(--display);
+        font-style: italic;
+        font-weight: 400;
+        font-size: 32px;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        color: var(--red);
+        margin-bottom: 14px;
+      }
+      .feature-t {
+        font-family: var(--display);
+        font-size: 24px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        margin: 0 0 10px;
+        line-height: 1.2;
+      }
+      .feature-d {
+        font-size: 14px;
+        line-height: 1.6;
+        opacity: 0.75;
+        margin: 0;
+      }
+      .feature-d .inline-code {
+        font-family: var(--mono);
+        font-size: 0.92em;
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+      .feature-sample {
+        font-family: var(--mono);
+        font-size: 13px;
+        line-height: 1.5;
+        background: color-mix(in srgb, var(--accent) 10%, transparent);
+        border-left: 2px solid var(--red);
+        padding: 10px 14px;
+        margin: 16px 0 0;
+        border-radius: 4px;
+        overflow-x: auto;
+        white-space: pre;
+        opacity: 0.95;
+      }
+
+      .features-prose {
+        max-width: 64ch;
+        font-size: 17px;
+        line-height: 1.65;
+        margin: 0;
+      }
+      .geoid-diagram {
+        display: block;
+        width: 100%;
+        max-width: 860px;
+        height: auto;
+        margin: 0;
+        color: var(--ink);
+        overflow: visible;
+      }
+      @media (min-width: 1000px) {
+        .geoid-diagram {
+          max-width: none;
+          justify-self: stretch;
+        }
+      }
+      .geoid-diagram .gd-surface {
+        font-family: var(--display);
+        font-style: italic;
+        font-size: 16px;
+        fill: currentColor;
+        opacity: 0.85;
+      }
+      .geoid-diagram .gd-surface-sub {
+        font-family: var(--body);
+        font-size: 12px;
+        fill: currentColor;
+        opacity: 0.55;
+      }
+      .geoid-diagram .gd-measure {
+        font-family: var(--display);
+        font-style: italic;
+        font-size: 24px;
+        fill: currentColor;
+      }
+      .geoid-diagram .gd-measure-sub {
+        font-family: var(--body);
+        font-size: 12px;
+        fill: currentColor;
+        opacity: 0.7;
+      }
+      .geoid-diagram .gd-measure-accent {
+        fill: var(--red);
+      }
+      .features-prose p {
+        margin: 0 0 1.1em;
+      }
+      .features-prose p:last-child {
+        margin-bottom: 0;
+      }
+      .features-prose strong {
+        font-weight: 500;
+        color: var(--red);
+      }
+      .features-prose code {
+        font-family: var(--mono);
+        font-size: 0.88em;
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+      .features-prose a {
+        color: var(--red);
+        text-decoration: underline;
+        text-decoration-color: color-mix(in srgb, var(--red) 40%, transparent);
+        text-underline-offset: 3px;
+      }
+      .features-prose a:hover {
+        text-decoration-color: var(--red);
+      }
+      .prose {
+        max-width: 64ch;
+        font-size: 17px;
+        line-height: 1.65;
+      }
+      .prose p {
+        margin: 0 0 1em;
+      }
+      .prose p:last-child {
+        margin-bottom: 0;
+      }
+      .prose code {
+        font-family: var(--mono);
+        font-size: 0.88em;
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+
+      /* ----- data sources ----- */
+      .sources {
+        background: var(--red);
+        color: var(--hero-fg);
+        padding: 120px 64px;
+      }
+      .sources-h {
+        font-family: var(--display);
+        font-weight: 500;
+        font-size: clamp(2rem, 5vw, 4rem);
+        line-height: 0.95;
+        letter-spacing: -0.035em;
+        margin: 0 0 24px;
+        max-width: 22ch;
+      }
+      .sources-lede {
+        font-size: 17px;
+        line-height: 1.55;
+        max-width: 58ch;
+        opacity: 0.88;
+        margin: 0 0 56px;
+      }
+      .source-list {
+        display: grid;
+        gap: 0;
+        max-width: 1100px;
+        border-top: 1px solid rgba(255, 255, 255, 0.25);
+      }
+      .source {
+        display: grid;
+        grid-template-columns: 1fr 2fr auto;
+        gap: 32px;
+        padding: 22px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+        align-items: start;
+      }
+      .source > .source-role,
+      .source > .source-lic {
+        padding-top: 22px;
+      }
+      .source-name {
+        font-family: var(--display);
+        font-size: 22px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+      .source-eyebrow {
+        font-family: var(--display);
+        font-style: italic;
+        font-weight: 400;
+        font-size: 13px;
+        letter-spacing: 0.01em;
+        opacity: 0.75;
+        margin-bottom: 4px;
+      }
+      .source-name a {
+        color: inherit;
+        text-decoration: underline;
+        text-decoration-color: rgba(255, 255, 255, 0.3);
+        text-underline-offset: 4px;
+      }
+      .source-role {
+        font-size: 16px;
+        line-height: 1.6;
+        opacity: 0.92;
+      }
+      .source-lic {
+        font-family: var(--display);
+        font-style: italic;
+        font-weight: 400;
+        font-size: 15px;
+        opacity: 0.9;
+        text-align: right;
+        white-space: nowrap;
+      }
+      @media (max-width: 720px) {
+        .source {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+        .source-lic {
+          text-align: left;
+        }
+      }
+
+      /* ----- about this service ----- */
+      .about {
+        background: var(--paper);
+        color: var(--ink);
+        padding: 120px 64px 160px;
+        border-top: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+      }
+      .about-h {
+        font-family: var(--display);
+        font-weight: 500;
+        font-size: clamp(2rem, 5vw, 4rem);
+        line-height: 0.95;
+        letter-spacing: -0.035em;
+        margin: 0 0 32px;
+        max-width: 22ch;
+      }
+      .about-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 64px;
+        max-width: 1100px;
+      }
+      @media (max-width: 720px) {
+        .about-grid {
+          grid-template-columns: 1fr;
+          gap: 32px;
+        }
+      }
+      .about-card h3 {
+        font-family: var(--display);
+        font-style: italic;
+        font-weight: 400;
+        font-size: 18px;
+        letter-spacing: -0.01em;
+        color: var(--accent);
+        margin: 0 0 10px;
+      }
+      .about-card p {
+        font-size: 15px;
+        line-height: 1.6;
+        margin: 0;
+        opacity: 0.85;
+      }
+      .attrib-code {
+        font-family: var(--mono);
+        font-size: 12.5px;
+        line-height: 1.55;
+        margin: 8px 0 0;
+        padding: 12px 14px;
+        background: color-mix(in srgb, var(--ink) 8%, transparent);
+        border-radius: 8px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+      .attrib-code a {
+        color: var(--accent);
+        text-decoration: underline;
+        text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+        text-underline-offset: 3px;
+      }
+      .manual-attrib {
+        margin-top: 12px;
+      }
+      .manual-attrib-h {
+        font-family: var(--body);
+        font-weight: 500;
+        font-size: 15px;
+        line-height: 1.6;
+        color: var(--accent);
+        margin: 0;
+        cursor: pointer;
+        list-style: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        user-select: none;
+        opacity: 0.85;
+      }
+      .manual-attrib-h::-webkit-details-marker {
+        display: none;
+      }
+      .manual-attrib-h::before {
+        content: "›";
+        font-size: 18px;
+        line-height: 1;
+        transition: transform 180ms ease;
+        opacity: 0.7;
+      }
+      .manual-attrib[open] > .manual-attrib-h::before {
+        transform: rotate(90deg);
+      }
+      .manual-attrib[open] > .manual-attrib-h {
+        margin-bottom: 10px;
+      }
+      .manual-attrib p {
+        font-size: 15px;
+        line-height: 1.6;
+        margin: 0;
+        opacity: 0.85;
+      }
+
+      /* ----- footer ----- */
+      .footer {
+        background: var(--paper);
+        color: var(--ink);
+        padding: 36px 64px 56px;
+        border-top: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 32px;
+        flex-wrap: wrap;
+        font-family: var(--body);
+        font-size: 14px;
+        opacity: 0.7;
+      }
+      .footer a {
+        color: inherit;
+        text-decoration: none;
+        margin-left: 24px;
+      }
+      .footer a:hover {
+        color: var(--red);
+      }
+
+      @media (max-width: 720px) {
+        .hero-content,
+        .quickstart,
+        .features,
+        .closer {
+          padding-left: 28px;
+          padding-right: 28px;
+        }
+        .hero-title {
+          font-size: clamp(5rem, 22vw, 8rem);
+        }
+        .hero-footer {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- theme toggle -->
+    <div class="theme-toggle" role="group" aria-label="Theme">
+      <button
+        type="button"
+        data-palette="alpha"
+        aria-pressed="true"
+        aria-label="Light theme"
+        title="Light theme"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        data-palette="gamma"
+        aria-pressed="false"
+        aria-label="Dark theme"
+        title="Dark theme"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- hero -->
+    <section class="hero" id="hero">
+      <iframe
+        id="globe"
+        data-src="/viewer?demo"
+        title="Re:Earth Terrain live globe"
+        loading="lazy"
+        referrerpolicy="no-referrer-when-downgrade"
+      ></iframe>
+      <div id="cover"></div>
+      <div class="hero-shade"></div>
+      <div class="hero-content">
+        <h1 class="hero-title">
+          Re:<em>Earth</em><br />Terrain
+        </h1>
+        <div class="hero-footer">
+          <p class="hero-tag">
+            Open terrain tiles for 3D globes, served from the edge.
+            CesiumJS &amp; MapLibre, no auth, no key.
+          </p>
+          <div class="hero-cta">
+            <a class="btn btn-primary" href="#quickstart">Quick start →</a>
+            <a class="btn btn-ghost" href="/viewer">Open viewer ↗</a>
+            <a class="btn btn-ghost" href="https://github.com/eukarya-inc/reearth-terrain"
+              >GitHub</a
+            >
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- quick start -->
+    <section class="quickstart" id="quickstart">
+      <h2 class="quickstart-h">One URL. Your renderer picks up the rest.</h2>
+      <p class="quickstart-lede">
+        The service publishes both Cesium <code style="font-family:var(--mono);font-size:0.92em;background:rgba(0,0,0,0.18);padding:1px 6px;border-radius:4px;">layer.json</code>
+        and TileJSON, so Cesium and MapLibre each configure themselves
+        from a single URL. No tokens, no signup — just the path.
+      </p>
+
+      <div class="code-grid">
+        <div class="code-col">
+          <div class="code-col-eyebrow">CesiumJS</div>
+          <h3 class="code-col-h">quantized-mesh-1.0</h3>
+          <p class="code-col-d">
+            Point <code>CesiumTerrainProvider.fromUrl</code> at the
+            endpoint — extensions like vertex normals and the water
+            mask are advertised in <code>layer.json</code> and
+            negotiated automatically.
+          </p>
+          <div class="code-block">
+            <button class="copy-btn" data-copy="cesium">Copy</button>
+<pre style="margin:0;font-family:inherit"><span class="cm">// CesiumJS — quantized-mesh-1.0</span>
+<span class="kw">const</span> terrain = <span class="kw">await</span> Cesium.CesiumTerrainProvider.fromUrl(
+  <span class="str">"https://terrain.reearth.land/cesium-mesh/ellipsoid"</span>,
+  { requestVertexNormals: <span class="kw">true</span>, requestWaterMask: <span class="kw">true</span> }
+);
+<span class="kw">const</span> viewer = <span class="kw">new</span> Cesium.Viewer(<span class="str">"cesium"</span>, { terrainProvider: terrain });</pre>
+          </div>
+        </div>
+
+        <div class="code-col">
+          <div class="code-col-eyebrow">MapLibre · Terrain-RGB</div>
+          <h3 class="code-col-h">Terrain-RGB</h3>
+          <p class="code-col-d">
+            Reach for this when you specifically need ellipsoidal
+            heights — for ordinary 2.5D hillshade,
+            <a style="color:inherit;text-decoration:underline;text-underline-offset:3px;" href="https://mapterhorn.com">Mapterhorn</a>
+            is the better default.
+          </p>
+          <div class="code-block">
+            <button class="copy-btn" data-copy="maplibre-mapbox">Copy</button>
+<pre style="margin:0;font-family:inherit"><span class="cm">// MapLibre GL JS — Mapbox Terrain-RGB</span>
+map.addSource(<span class="str">"terrain"</span>, {
+  type: <span class="str">"raster-dem"</span>,
+  url:  <span class="str">"https://terrain.reearth.land/mapbox/ellipsoid/tilejson.json"</span>,
+});
+map.setTerrain({ source: <span class="str">"terrain"</span> });</pre>
+          </div>
+        </div>
+
+        <div class="code-col">
+          <div class="code-col-eyebrow">MapLibre · Terrarium</div>
+          <h3 class="code-col-h">Terrarium</h3>
+          <p class="code-col-d">
+            Same content, different pixel encoding. Use this when your
+            toolchain already speaks Terrarium (Mapzen, AWS Open
+            Terrain Tiles, deck.gl, &hellip;).
+          </p>
+          <div class="code-block">
+            <button class="copy-btn" data-copy="maplibre-terrarium">Copy</button>
+<pre style="margin:0;font-family:inherit"><span class="cm">// MapLibre GL JS — Terrarium</span>
+map.addSource(<span class="str">"terrain"</span>, {
+  type: <span class="str">"raster-dem"</span>,
+  url:  <span class="str">"https://terrain.reearth.land/terrarium/ellipsoid/tilejson.json"</span>,
+  encoding: <span class="str">"terrarium"</span>,
+});
+map.setTerrain({ source: <span class="str">"terrain"</span> });</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- features -->
+    <section class="features">
+      <h2 class="features-h">
+        3D Earth needs <em>ellipsoidal</em> heights.
+      </h2>
+
+      <div class="features-top">
+      <div class="features-prose">
+        <p>
+          Drape regular elevation tiles over a Cesium globe and the
+          terrain lands tens of meters off where the renderer thinks
+          the planet's surface is. Mt. Fuji's 3,776 m above sea level
+          sits about 37 m below the point the globe is actually
+          drawing — because sea-level heights were never measured
+          against the smooth WGS84 ellipsoid that 3D Earth uses. They
+          were measured against the lumpy shape of mean sea level: the
+          <strong>geoid</strong>.
+        </p>
+        <p>
+          NGA's EGM2008 publishes the offset between geoid and
+          ellipsoid as a grid (−106 m to +85 m worldwide). Add it to a
+          sea-level height and you get the <strong>ellipsoidal
+          height</strong> a 3D globe needs.
+        </p>
+        <p>
+          Re:Earth Terrain does that per request, in whatever wire format your renderer expects
+          — so ellipsoidal-height datasets like Japan's
+          <a href="https://www.mlit.go.jp/plateau/" target="_blank" rel="noopener">PLATEAU</a>
+          3D city models drop in with buildings already sitting on
+          the ground. Three knobs at the URL, all from one upstream
+          DEM and geoid.
+        </p>
+      </div>
+
+      <svg
+        class="geoid-diagram"
+        viewBox="0 0 800 400"
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-labelledby="geoid-diagram-title geoid-diagram-desc"
+      >
+        <title id="geoid-diagram-title">Ellipsoid, geoid and terrain</title>
+        <desc id="geoid-diagram-desc">
+          Three surfaces drawn on a curved planet: terrain (the ground), the geoid
+          (mean sea level, a lumpy equipotential surface), and the smooth WGS84
+          ellipsoid. Ellipsoidal height h equals orthometric height H plus geoid
+          undulation N.
+        </desc>
+
+        <!--
+          All three surfaces share a base curvature (apex near x=410) so the
+          diagram reads as a piece of a globe, not a flat cross-section.
+          Mountain sits in the left half so the right side stays open for the
+          sea: shore at (550, 200), seafloor deepens to (720, 310). Sea fill
+          traces the same beziers as the strokes (terrain reversed) so it
+          cannot bleed past the lines.
+        -->
+
+        <!-- Sea (only filled region) — bottom edge mirrors the terrain seafloor for C1 smoothness at shore. -->
+        <path
+          d="M 550 200 C 600 215, 670 235, 720 250 L 720 310 C 670 280, 590 202, 550 200 Z"
+          fill="currentColor"
+          fill-opacity="0.1"
+        />
+
+        <!-- Ellipsoid (smooth circular-arc-like sweep, dashed) -->
+        <path
+          d="M 110 340 C 280 275, 540 275, 720 345"
+          fill="none"
+          stroke="currentColor"
+          stroke-opacity="0.5"
+          stroke-width="1.4"
+          stroke-dasharray="6 4"
+        />
+
+        <!-- Geoid (follows curvature, gentle wave) -->
+        <path
+          d="M 110 250 C 180 235, 260 215, 370 195 C 395 188, 410 190, 420 193 C 460 198, 510 200, 550 200 C 600 215, 670 235, 720 250"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+        />
+
+        <!-- Terrain (peak (370,95), measurement P (420,125), shore (550,200), seafloor to (720,310)).
+             At shore, the outgoing control point (590,202) is the reflection of the incoming
+             control (510,198) so the curve is C1-continuous — no kink where land meets sea. -->
+        <path
+          d="M 110 230 C 180 215, 260 165, 370 95 C 395 100, 410 115, 420 125 C 460 175, 510 198, 550 200 C 590 202, 670 280, 720 310"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.9"
+        />
+
+        <!-- Surface labels (left edge, near where each curve enters) -->
+        <text class="gd-surface" x="100" y="232" text-anchor="end">Terrain</text>
+        <text class="gd-surface" x="100" y="256" text-anchor="end">Geoid</text>
+        <text class="gd-surface-sub" x="100" y="272" text-anchor="end">mean sea level</text>
+        <text class="gd-surface" x="100" y="346" text-anchor="end">Ellipsoid</text>
+        <text class="gd-surface-sub" x="100" y="362" text-anchor="end">WGS84</text>
+
+        <!-- Measurement column at x=420.
+             P=(420,125) terrain, geoid=(420,193), ellipsoid=(420,292). -->
+
+        <!-- Point P on terrain -->
+        <circle cx="420" cy="125" r="3.5" fill="currentColor" />
+
+        <!-- Vertical measurement axis (thin guide) -->
+        <line x1="420" y1="125" x2="420" y2="292"
+              stroke="currentColor" stroke-width="0.75" stroke-opacity="0.45" />
+
+        <!-- Ticks at the three crossings -->
+        <line x1="413" y1="125" x2="427" y2="125" stroke="currentColor" stroke-width="1" stroke-opacity="0.6" />
+        <line x1="413" y1="193" x2="427" y2="193" stroke="currentColor" stroke-width="1" stroke-opacity="0.6" />
+        <line x1="413" y1="292" x2="427" y2="292" stroke="currentColor" stroke-width="1" stroke-opacity="0.6" />
+
+        <!-- Left bracket: H (terrain → geoid) -->
+        <path
+          d="M 408 125 L 402 125 L 402 193 L 408 193"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1"
+          stroke-opacity="0.7"
+        />
+        <!-- Left bracket: N (geoid → ellipsoid) -->
+        <path
+          d="M 408 193 L 402 193 L 402 292 L 408 292"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1"
+          stroke-opacity="0.7"
+        />
+
+        <!-- Right bracket: h (terrain → ellipsoid), accent red -->
+        <path
+          d="M 432 125 L 438 125 L 438 292 L 432 292"
+          fill="none"
+          stroke="var(--red)"
+          stroke-width="1.5"
+        />
+
+        <!-- H label — sits in the mountain interior (below terrain, above geoid) -->
+        <text class="gd-measure" x="392" y="166" text-anchor="end">H</text>
+        <text class="gd-measure-sub" x="392" y="182" text-anchor="end">orthometric height</text>
+
+        <!-- N label — sits between geoid and ellipsoid -->
+        <text class="gd-measure" x="392" y="248" text-anchor="end">N</text>
+        <text class="gd-measure-sub" x="392" y="264" text-anchor="end">geoid undulation</text>
+
+        <!-- h label — open sky beside the right slope of the mountain -->
+        <text class="gd-measure gd-measure-accent" x="450" y="112">h</text>
+        <text class="gd-measure-sub" x="450" y="134" fill="var(--red)" fill-opacity="0.9">ellipsoidal height</text>
+        <text class="gd-surface-sub" x="450" y="152">h = H + N</text>
+      </svg>
+      </div>
+
+      <div class="feature-grid">
+        <div class="feature">
+          <div class="feature-num">01</div>
+          <h3 class="feature-t">Wire formats</h3>
+          <p class="feature-d">
+            <code class="inline-code">quantized-mesh-1.0</code> ships
+            TMS-Geographic meshes for Cesium, with optional vertex
+            normals and a 256×256 water mask. Raster
+            (<code class="inline-code">mapbox</code> or
+            <code class="inline-code">terrarium</code> pixel encoding)
+            packs heights into PNG/WebP tiles for MapLibre, Mapbox GL,
+            and anything else that already speaks raster-DEM.
+          </p>
+        </div>
+        <div class="feature">
+          <div class="feature-num">02</div>
+          <h3 class="feature-t">Vertical datums</h3>
+          <p class="feature-d">
+            Pick the surface heights are measured against:
+            <code class="inline-code">ellipsoid</code> for 3D globes
+            and anything fed by GNSS,
+            <code class="inline-code">elevation</code> for hiking maps
+            and sea-level overlays. Same DEM, same geoid — the path
+            decides how they're blended.
+          </p>
+        </div>
+        <div class="feature">
+          <div class="feature-num">03</div>
+          <h3 class="feature-t">Standalone geoid</h3>
+          <p class="feature-d">
+            The <code class="inline-code">geoid</code> data type
+            returns the EGM2008 undulation by itself — handy for
+            client-side conversion or visualizing the surface
+            directly.
+          </p>
+          <pre class="feature-sample">/mapbox/geoid/tilejson.json</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- data sources -->
+    <section class="sources">
+      <h2 class="sources-h">
+        Three open datasets, stitched live.
+      </h2>
+      <p class="sources-lede">
+        Nothing is re-hosted. Every request reaches upstream over HTTPS,
+        and the attributions below are injected into TileJSON and Cesium
+        layer.json so your clients display them automatically.
+      </p>
+      <div class="source-list">
+        <div class="source">
+          <div>
+            <div class="source-eyebrow">DEM — terrain heights</div>
+            <div class="source-name">
+              <a href="https://mapterhorn.com/">Mapterhorn</a>
+            </div>
+          </div>
+          <div class="source-role">
+            Global DEM with sea-level heights. A fused product itself —
+            NASADEM, Copernicus GLO-30 and others are blended upstream.
+          </div>
+          <div class="source-lic">CC BY 4.0</div>
+        </div>
+        <div class="source">
+          <div>
+            <div class="source-eyebrow">Geoid — sea-level ↔ ellipsoid offset</div>
+            <div class="source-name">
+              <a href="https://earth-info.nga.mil/">EGM2008</a>
+            </div>
+          </div>
+          <div class="source-role">
+            Geoid undulation grid published by the US National
+            Geospatial-Intelligence Agency. Powers the sea-level →
+            ellipsoidal conversion and the standalone geoid data type.
+          </div>
+          <div class="source-lic">Public domain</div>
+        </div>
+        <div class="source">
+          <div>
+            <div class="source-eyebrow">Water mask — water polygons</div>
+            <div class="source-name">
+              <a href="https://protomaps.com/">Protomaps daily basemap</a>
+            </div>
+          </div>
+          <div class="source-role">
+            OpenStreetMap-derived water polygons that produce the
+            optional 256×256 water mask attached to quantized-mesh tiles.
+          </div>
+          <div class="source-lic">ODbL · © OSM</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- about this service -->
+    <section class="about">
+      <h2 class="about-h">
+        About this <em style="font-style:italic;font-weight:400;color:var(--red);">service</em>.
+      </h2>
+      <div class="about-grid">
+        <div class="prose">
+          <p>
+            <strong>Re:Earth Terrain</strong> is operated by
+            <a style="color:var(--accent);" href="https://eukarya.io">Eukarya, Inc.</a>
+            as part of the Re:Earth ecosystem. It started as the terrain
+            backend for
+            <a style="color:var(--accent);" href="https://reearth.io">Re:Earth</a>,
+            our open-source 3D mapping platform, and we run it openly
+            because the data and tools we build on — OpenStreetMap,
+            Mapterhorn, EGM2008 — are themselves open.
+          </p>
+          <p>
+            The compute runs on Cloudflare Workers, with R2 holding both
+            the source datasets and a content-addressed tile cache. The
+            project's own code is MIT-licensed and lives
+            <a style="color:var(--accent);" href="https://github.com/eukarya-inc/reearth-terrain">on GitHub</a>.
+          </p>
+          <p>
+            By design, every tile is built on demand from the upstream
+            sources — there is no batch pipeline, and we don't publish
+            pre-rendered archives like a PMTiles bundle. New upstream
+            data shows up in the next request, and we never have to
+            babysit a re-tile job.
+          </p>
+          <p style="margin-top: 28px;">
+            <a
+              href="/viewer"
+              style="
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 12px 20px;
+                border-radius: 999px;
+                background: var(--red);
+                color: var(--paper);
+                font-family: var(--body);
+                font-weight: 500;
+                font-size: 14px;
+                text-decoration: none;
+                transition: transform 200ms ease;
+              "
+              onmouseover="this.style.transform='translateY(-1px)'"
+              onmouseout="this.style.transform='translateY(0)'"
+              >Inspect tiles in the viewer ↗</a
+            >
+          </p>
+        </div>
+        <div>
+          <div class="about-card" style="margin-bottom:32px;">
+            <h3>Operating model</h3>
+            <p>
+              Best-effort uptime, no SLA, no signup, no API key. We may
+              add rate limits without notice if a single client starts
+              dominating traffic — the goal is keeping the service
+              usable for everyone, not gating access.
+            </p>
+          </div>
+          <div class="about-card" style="margin-bottom:32px;">
+            <h3>Attribution</h3>
+            <p>
+              The code is MIT, but the data licenses ride along with the
+              tile bytes. The runtime ships every required attribution
+              in TileJSON / layer.json, so wiring up the service with
+              its defaults is usually enough.
+            </p>
+            <details class="manual-attrib">
+              <summary class="manual-attrib-h">Manual attribution</summary>
+              <p>
+                If you're surfacing credits outside that flow, the
+                minimum line is:
+              </p>
+              <pre class="attrib-code"><a href="https://terrain.reearth.land/">Re:Earth Terrain</a> · <a href="https://mapterhorn.com/">Mapterhorn</a> (CC BY 4.0)</pre>
+              <p style="margin-top:10px;">
+                Append when the water mask is enabled:
+              </p>
+              <pre class="attrib-code"><a href="https://protomaps.com/">Protomaps</a> · © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors (ODbL)</pre>
+            </details>
+          </div>
+          <div class="about-card">
+            <h3>What this isn't</h3>
+            <p>
+              Not a production SaaS with an SLA, and not a guaranteed
+              dataset for safety-critical work. If you need either, host
+              the upstream sources yourself — or reach Eukarya at
+              <a style="color:var(--accent);" href="mailto:info@eukarya.io">info@eukarya.io</a>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- footer -->
+    <footer class="footer">
+      <div>© Re:Earth and contributors</div>
+      <div>
+        <a href="https://terrain.reearth.land/viewer">Viewer</a>
+        <a href="https://github.com/eukarya-inc/reearth-terrain">GitHub</a>
+        <a href="https://reearth.io">Re:Earth</a>
+      </div>
+    </footer>
+
+    <script>
+      // ----- theme toggle -----
+      const THEME_KEY = "reearth-terrain:theme";
+      const applyTheme = (p) => {
+        document.documentElement.dataset.palette = p;
+        document.querySelectorAll(".theme-toggle button").forEach((x) =>
+          x.setAttribute(
+            "aria-pressed",
+            x.dataset.palette === p ? "true" : "false",
+          ),
+        );
+      };
+      const stored = localStorage.getItem(THEME_KEY);
+      if (stored === "alpha" || stored === "gamma") applyTheme(stored);
+      document.querySelectorAll(".theme-toggle button").forEach((b) => {
+        b.addEventListener("click", () => {
+          const p = b.dataset.palette;
+          applyTheme(p);
+          try {
+            localStorage.setItem(THEME_KEY, p);
+          } catch {}
+        });
+      });
+
+      // ----- copy buttons -----
+      const snippets = {
+        cesium: `const terrain = await Cesium.CesiumTerrainProvider.fromUrl(
+  "https://terrain.reearth.land/cesium-mesh/ellipsoid",
+  { requestVertexNormals: true, requestWaterMask: true }
+);
+const viewer = new Cesium.Viewer("cesium", { terrainProvider: terrain });`,
+        "maplibre-mapbox": `map.addSource("terrain", {
+  type: "raster-dem",
+  url:  "https://terrain.reearth.land/mapbox/ellipsoid/tilejson.json",
+});
+map.setTerrain({ source: "terrain" });`,
+        "maplibre-terrarium": `map.addSource("terrain", {
+  type: "raster-dem",
+  url:  "https://terrain.reearth.land/terrarium/ellipsoid/tilejson.json",
+  encoding: "terrarium",
+});
+map.setTerrain({ source: "terrain" });`,
+      };
+      document.querySelectorAll(".copy-btn").forEach((b) => {
+        b.addEventListener("click", async () => {
+          const v = snippets[b.dataset.copy] ?? b.dataset.copy;
+          await navigator.clipboard.writeText(v);
+          const orig = b.textContent;
+          b.textContent = "Copied";
+          setTimeout(() => (b.textContent = orig), 1200);
+        });
+      });
+
+      // Phones don't get the live globe. Cesium is heavy (~5 MB JS,
+      // continuous WebGL render) and the hero image already conveys
+      // the product feel. Detect once at script time; we don't try
+      // to upgrade on rotate/resize.
+      const IS_MOBILE = window.matchMedia("(max-width: 720px)").matches;
+      const heroEl = document.getElementById("hero");
+      const globeFrame = document.getElementById("globe");
+
+      if (IS_MOBILE) {
+        heroEl.classList.add("no-globe");
+        globeFrame.remove();
+      } else {
+        // Defer-load the iframe; using data-src + JS gate avoids
+        // Cesium fetching its ~5 MB bundle before we've decided
+        // whether we want it.
+        globeFrame.src = globeFrame.dataset.src;
+
+        // Fade out the cover (placeholder image + spinner) once the
+        // viewer signals it's ready. The cover is `pointer-events:
+        // none`, so no removal needed — it just becomes invisible.
+        window.addEventListener("message", (e) => {
+          if (e.data?.type === "reearth-terrain:ready") {
+            document.getElementById("cover").classList.add("gone");
+            setupGlobeVisibilityObserver();
+          }
+        });
+      }
+
+      // Pause the globe iframe's demo orbit + Cesium render loop
+      // while the hero is scrolled out of view — otherwise Cesium
+      // keeps burning rAF cycles drawing frames nobody's looking
+      // at. Attached only after the viewer signals ready, so the
+      // first visibility message lands on a wired-up listener.
+      let globeVisibilityObserver = null;
+      function setupGlobeVisibilityObserver() {
+        if (globeVisibilityObserver) return;
+        const globe = document.getElementById("globe");
+        if (!globe || !("IntersectionObserver" in window)) return;
+        globeVisibilityObserver = new IntersectionObserver(
+          (entries) => {
+            const entry = entries[entries.length - 1];
+            if (!entry) return;
+            globe.contentWindow?.postMessage(
+              {
+                type: "reearth-terrain:visibility",
+                visible: entry.isIntersecting,
+              },
+              "*",
+            );
+          },
+          { threshold: 0 },
+        );
+        globeVisibilityObserver.observe(globe);
+      }
+    </script>
+  </body>
+</html>
