@@ -72,7 +72,7 @@ ENABLE_DEBUG = ""
 # build.protomaps.com daily builds; "mirror" reads from the R2 snapshot
 # maintained by the separate `reearth-terrain-mirror` worker. Switch to
 # "mirror" once the mirror has run at least once.
-PROTOMAPS_SOURCE = "upstream"
+PROTOMAPS_SOURCE = "mirror"
 # R2 key prefix where the mirror worker writes `latest.json` and the
 # `{date}.pmtiles` snapshots. Must match the mirror worker's
 # `MIRROR_PREFIX`. Only consulted when `PROTOMAPS_SOURCE=mirror`.
