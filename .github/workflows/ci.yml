@@ -77,7 +77,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || 'dry-run-noop' }}
 
   cargo-test:
-    name: cargo test (terrain-codec)
+    name: cargo test (reearth-terrain-wasm)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -86,7 +86,7 @@ jobs:
         with:
           shared-key: cargo-test
           cache-targets: true
-      - run: cargo test --manifest-path crates/terrain-codec/Cargo.toml --lib --release
+      - run: cargo test --manifest-path crates/reearth-terrain-wasm/Cargo.toml --lib --release
 
   mirror-build:
     name: mirror typecheck + wrangler dry-run
