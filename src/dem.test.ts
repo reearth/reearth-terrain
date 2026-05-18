@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MapterhornSource } from "./dem.js";
-import { encode_terrarium, rgb_to_webp } from "./wasm/terrain-codec/terrain_codec.js";
+import { encode_terrarium, rgb_to_webp } from "./wasm/reearth-terrain-wasm/reearth_terrain_wasm.js";
 
 // Build a 4x4 Terrarium-encoded WebP we can hand back from the stubbed fetch.
 // `encode_terrarium` returns raw RGB; `rgb_to_webp` wraps it as a lossless WebP.

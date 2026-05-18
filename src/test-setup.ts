@@ -24,13 +24,13 @@ if (typeof (globalThis as Record<string, unknown>).FinalizationRegistry === "und
 // `wasm.__wbindgen_*` exports actually resolve to functions.
 // Pull in the patched outer glue first so its (broken-in-this-env) init block
 // runs before we overwrite the `wasm` binding with a real instance.
-import "./wasm/terrain-codec/terrain_codec.js";
-import * as wasmGlue from "./wasm/terrain-codec/terrain_codec_bg.js";
+import "./wasm/reearth-terrain-wasm/reearth_terrain_wasm.js";
+import * as wasmGlue from "./wasm/reearth-terrain-wasm/reearth_terrain_wasm_bg.js";
 // In workerd the default export of a .wasm import is a WebAssembly.Module.
-import wasmModule from "./wasm/terrain-codec/terrain_codec_bg.wasm";
+import wasmModule from "./wasm/reearth-terrain-wasm/reearth_terrain_wasm_bg.wasm";
 
 const wasmInstance = new WebAssembly.Instance(wasmModule as WebAssembly.Module, {
-  "./terrain_codec_bg.js": wasmGlue as unknown as WebAssembly.ModuleImports,
+  "./reearth_terrain_wasm_bg.js": wasmGlue as unknown as WebAssembly.ModuleImports,
 });
 (wasmGlue as unknown as { __wbg_set_wasm: (v: unknown) => void }).__wbg_set_wasm(
   wasmInstance.exports,

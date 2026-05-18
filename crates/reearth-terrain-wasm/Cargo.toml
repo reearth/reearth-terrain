@@ -1,0 +1,20 @@
+[package]
+name = "reearth-terrain-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WASM bindings exposing terrain-codec (heightmap + quantized-mesh + normals) to the Re:Earth Terrain worker."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = { workspace = true }
+terrain-codec = { version = "0.2.1", features = ["png", "webp"] }
+
+[package.metadata.wasm-pack.profile.release]
+# We invoke a system wasm-opt from scripts/build-wasm.mjs instead, because
+# the wasm-opt bundled with wasm-pack lags behind rustc and rejects newer
+# WebAssembly features.
+wasm-opt = false

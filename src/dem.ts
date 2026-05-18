@@ -10,7 +10,7 @@
 // That keeps R2/Fetch I/O in the Worker layer and concentrates CPU-bound
 // pixel work in the WASM core.
 
-import { decode_terrarium_webp, DecodedTile } from "./wasm/terrain-codec/terrain_codec.js";
+import { decode_terrarium_webp, DecodedTile } from "./wasm/reearth-terrain-wasm/reearth_terrain_wasm.js";
 
 export interface DemTile {
   /** Tile pixel width (Mapterhorn ships 512px tiles). */

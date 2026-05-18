@@ -103,10 +103,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
-name = "martini-rs"
-version = "0.1.0"
+name = "martini"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adf4040f1b41f96ae782c5151e5d36969ac9316d8c6982e9a912d0de4b42fa59"
+checksum = "e14d4306200bb265874bb32ec85fa8fe1600cf80d0695d9ce8eca25555f8d0a3"
 
 [[package]]
 name = "memchr"
@@ -179,9 +179,9 @@ checksum = "e0c5ccf5294c6ccd63a74f1565028353830a9c2f5eb0c682c355c471726a6e3f"
 
 [[package]]
 name = "quantized-mesh"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d53ab3652a458b63a659fce60ba9642ba8b8e46eff3ac87aaf1892ea3d24973"
+checksum = "d4a5e792cb6e9b00c3c689db2fa33a9b50e816821bfd5f3bf5e5577bbf3b6011"
 dependencies = [
  "flate2",
  "serde",
@@ -201,6 +201,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "reearth-terrain-wasm"
+version = "0.1.1"
+dependencies = [
+ "terrain-codec",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -271,15 +279,15 @@ dependencies = [
 
 [[package]]
 name = "terrain-codec"
-version = "0.1.1"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca2407a5a54cd928695df91d4f76ec023e639ebf5d37dd63928d7eaeef8bc222"
 dependencies = [
- "flate2",
  "image",
- "martini-rs",
+ "martini",
  "quantized-mesh",
  "serde",
  "serde_json",
- "wasm-bindgen",
 ]
 
 [[package]]

@@ -6,7 +6,7 @@ import {
   rgb_to_webp,
   rgb_to_png,
   encode_quantized_mesh,
-} from "./wasm/terrain-codec/terrain_codec.js";
+} from "./wasm/reearth-terrain-wasm/reearth_terrain_wasm.js";
 import { openCog } from "./cog.js";
 import { readTileFromImage, tileToLonLatBounds } from "./tile.js";
 import { readTileSamples, type DataType } from "./blend.js";

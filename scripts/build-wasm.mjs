@@ -16,7 +16,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 
 const crates = [
-  { name: "terrain-codec", snake: "terrain_codec" },
+  { name: "reearth-terrain-wasm", snake: "reearth_terrain_wasm" },
 ];
 
 for (const c of crates) {
