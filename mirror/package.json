@@ -1,0 +1,17 @@
+{
+  "name": "reearth-terrain-mirror",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251101.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.90.1"
+  }
+}

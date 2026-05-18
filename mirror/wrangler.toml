@@ -1,0 +1,44 @@
+name = "reearth-terrain-mirror"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Same Cloudflare account as the main worker.
+account_id = "6bec0134af3a47eff814c2581f42993f"
+
+[observability]
+enabled = true
+
+# Monthly mirror: the 1st of each month at 03:00 UTC.
+[triggers]
+crons = ["0 3 1 * *"]
+
+# Shared R2 bucket with the main worker. The mirror writes under the
+# `mirror/protomaps/` prefix so the namespace stays isolated from
+# `sources/` and `cache/`.
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "reearth-terrain"
+
+# Workflow that streams the upstream PMTiles archive into R2 over many
+# multipart-upload parts. `step.do` boundaries keep each invocation well
+# under the Worker CPU and subrequest limits.
+[[workflows]]
+name = "pmtiles-mirror"
+binding = "PMTILES_MIRROR"
+class_name = "PmtilesMirrorWorkflow"
+
+[vars]
+ENVIRONMENT = "production"
+# Upstream Protomaps daily build base URL.
+UPSTREAM_BASE = "https://build.protomaps.com"
+# R2 key prefix for mirrored archives. `latest.json` lives directly
+# under this prefix.
+MIRROR_PREFIX = "mirror/protomaps"
+# Bytes per multipart part. 50 MiB keeps a single part within Worker
+# memory limits and stays under the 10,000-parts ceiling for any
+# realistic PMTiles archive size.
+PART_SIZE = "52428800"
+# How many previous mirrored archives to keep around. The Workflow
+# deletes anything older than this after a successful upload.
+RETAIN_VERSIONS = "2"

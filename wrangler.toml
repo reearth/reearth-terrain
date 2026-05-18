@@ -68,3 +68,12 @@ DISABLE_CACHE = ""
 # `/debug/*` introspection endpoints are off in production. `.dev.vars`
 # flips this to "1" so they're reachable during local development only.
 ENABLE_DEBUG = ""
+# Watermask PMTiles backend. "upstream" (default) reads from
+# build.protomaps.com daily builds; "mirror" reads from the R2 snapshot
+# maintained by the separate `reearth-terrain-mirror` worker. Switch to
+# "mirror" once the mirror has run at least once.
+PROTOMAPS_SOURCE = "upstream"
+# R2 key prefix where the mirror worker writes `latest.json` and the
+# `{date}.pmtiles` snapshots. Must match the mirror worker's
+# `MIRROR_PREFIX`. Only consulted when `PROTOMAPS_SOURCE=mirror`.
+MIRROR_PREFIX = "mirror/protomaps"

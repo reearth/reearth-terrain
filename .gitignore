@@ -5,6 +5,7 @@ target/
 src/wasm/*/
 !src/wasm/.gitkeep
 data/
+tmp/
 .DS_Store
 .env
 .env.*

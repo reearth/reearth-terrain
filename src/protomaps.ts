@@ -1,23 +1,33 @@
-// Protomaps PMTiles daily-build resolver.
+// Protomaps PMTiles source resolver.
 //
-// The published archives at build.protomaps.com expire after roughly one
-// week (and the Protomaps team discourages hotlinking). Hard-coding a date
-// would leave us with a 404 every few days, so this module HEAD-probes
-// `${YYYYMMDD}.pmtiles` walking back from today and memoizes the first OK
-// response for an hour per worker instance.
+// The watermask reads from one Protomaps PMTiles archive. Two backends
+// are supported:
 //
-// The resolved date selects which archive to read; the cache key is
+//   - `upstream` (default): HEAD-probe `${YYYYMMDD}.pmtiles` at
+//     build.protomaps.com walking back from today, then read via Range
+//     fetches. The published archives expire after roughly one week,
+//     so the date is rediscovered hourly in-memory.
+//
+//   - `mirror`: read a snapshot maintained by the `reearth-terrain-mirror`
+//     worker. The pointer file `${MIRROR_PREFIX}/latest.json` in R2
+//     names the active archive; we read it once per worker instance and
+//     serve byte ranges directly from R2. Insulates the service from
+//     upstream retention and outages, at the cost of running a separate
+//     worker that copies the archive on a monthly cadence.
+//
+// The resolved Source selects which archive to read; the cache key is
 // derived per-tile from PMTiles directory entries (see
-// `ProtomapsWaterMask.tileLocators`) so daily rebuilds only invalidate
+// `ProtomapsWaterMask.tileLocators`) so build rotations only invalidate
 // the watermask-bearing entries whose underlying byte ranges actually
 // moved.
-//
-// Ported from reearth-buildings' apps/worker/src/version.ts which solves
-// the same problem for its glb pipeline.
+
+import type { RangeResponse, Source } from "pmtiles";
+import { FetchSource } from "pmtiles";
 
 const UPSTREAM_BASE = "https://build.protomaps.com";
 const MAX_PROBE_DAYS = 7;
 const CACHE_TTL_MS = 60 * 60 * 1000;
+const DEFAULT_MIRROR_PREFIX = "mirror/protomaps";
 
 interface CachedDate {
   value: string;
@@ -65,4 +75,116 @@ function formatUtcDate(d: Date): string {
   const m = `${d.getUTCMonth() + 1}`.padStart(2, "0");
   const day = `${d.getUTCDate()}`.padStart(2, "0");
   return `${y}${m}${day}`;
+}
+
+/**
+ * PMTiles `Source` backed by an R2 object. Issues `R2Bucket.get` with a
+ * `range` option per `getBytes` call. Used when `PROTOMAPS_SOURCE=mirror`
+ * — the mirror worker has already copied the archive into R2 under
+ * `${MIRROR_PREFIX}/{date}.pmtiles`.
+ */
+export class R2PmtilesSource implements Source {
+  #bucket: R2Bucket;
+  #key: string;
+  #identity: string;
+
+  constructor(bucket: R2Bucket, key: string) {
+    this.#bucket = bucket;
+    this.#key = key;
+    // Stable, archive-scoped identity so the pmtiles cache layer keys
+    // header / directory entries against this specific R2 object rather
+    // than mixing them with FetchSource entries.
+    this.#identity = `r2://${key}`;
+  }
+
+  getKey(): string {
+    return this.#identity;
+  }
+
+  async getBytes(offset: number, length: number): Promise<RangeResponse> {
+    const obj = await this.#bucket.get(this.#key, {
+      range: { offset, length },
+    });
+    if (!obj) throw new Error(`pmtiles archive not found in R2: ${this.#key}`);
+    const data = await obj.arrayBuffer();
+    return {
+      data,
+      etag: obj.httpEtag,
+    };
+  }
+}
+
+/**
+ * The pointer file that the mirror worker writes after a successful run.
+ * Only the fields read by the main worker are listed.
+ */
+export interface PmtilesMirrorPointer {
+  date: string;
+  key: string;
+  size: number;
+}
+
+interface CachedPointer {
+  value: PmtilesMirrorPointer;
+  expires: number;
+}
+
+let mirrorPointerCache: CachedPointer | null = null;
+
+/**
+ * Read `${prefix}/latest.json` from R2 with the same hourly TTL used for
+ * the upstream date probe. Reads are scoped to the worker instance — a
+ * fresh instance pays one R2 GET on first request, after that it's
+ * memoized.
+ */
+export async function readMirrorPointer(
+  bucket: R2Bucket,
+  prefix = DEFAULT_MIRROR_PREFIX,
+): Promise<PmtilesMirrorPointer> {
+  const now = Date.now();
+  if (mirrorPointerCache && mirrorPointerCache.expires > now) {
+    return mirrorPointerCache.value;
+  }
+  const obj = await bucket.get(`${prefix}/latest.json`);
+  if (!obj) {
+    throw new Error(
+      `mirror pointer ${prefix}/latest.json not found — run the mirror worker at least once`,
+    );
+  }
+  const parsed = await obj.json<PmtilesMirrorPointer>();
+  if (!parsed?.key || !parsed?.date) {
+    throw new Error(`mirror pointer ${prefix}/latest.json is malformed`);
+  }
+  mirrorPointerCache = { value: parsed, expires: now + CACHE_TTL_MS };
+  return parsed;
+}
+
+/** Test-only: drop the in-memory pointer cache between cases. */
+export function __resetMirrorPointerCache(): void {
+  mirrorPointerCache = null;
+}
+
+/**
+ * Resolve the PMTiles archive to read, honoring `PROTOMAPS_SOURCE`.
+ *
+ *   PROTOMAPS_SOURCE="mirror"   → R2 snapshot
+ *   anything else (default)     → upstream daily build
+ *
+ * Returns the pmtiles `Source` plus a short tag (date string for both
+ * backends) used to derive cache keys and human-readable URLs.
+ */
+export async function resolvePmtilesSource(env: {
+  R2?: R2Bucket;
+  PROTOMAPS_SOURCE?: string;
+  MIRROR_PREFIX?: string;
+}): Promise<{ source: Source; tag: string; sourceUrl: string }> {
+  if (env.PROTOMAPS_SOURCE === "mirror") {
+    if (!env.R2) throw new Error("PROTOMAPS_SOURCE=mirror requires the R2 binding");
+    const pointer = await readMirrorPointer(env.R2, env.MIRROR_PREFIX || DEFAULT_MIRROR_PREFIX);
+    const source = new R2PmtilesSource(env.R2, pointer.key);
+    return { source, tag: pointer.date, sourceUrl: `r2://${pointer.key}` };
+  }
+  const date = await currentPmtilesDate();
+  const url = pmtilesUrlForDate(date);
+  return { source: new FetchSource(url), tag: date, sourceUrl: url };
 }

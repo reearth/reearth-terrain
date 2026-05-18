@@ -11,6 +11,8 @@ declare namespace Cloudflare {
 		ENVIRONMENT: string;
 		DISABLE_CACHE: string;
 		ENABLE_DEBUG: string;
+		PROTOMAPS_SOURCE: string;
+		MIRROR_PREFIX: string;
 	}
 }
 interface Env extends Cloudflare.Env {}

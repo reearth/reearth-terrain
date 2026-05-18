@@ -88,6 +88,31 @@ jobs:
           cache-targets: true
       - run: cargo test --manifest-path crates/terrain-codec/Cargo.toml --lib --release
 
+  mirror-build:
+    name: mirror typecheck + wrangler dry-run
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mirror
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mirror/package-lock.json
+
+      - run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Wrangler dry-run
+        run: npx wrangler deploy --dry-run --outdir dist
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || 'dry-run-noop' }}
+
   deploy:
     name: Deploy (Cloudflare Workers)
     needs: [build, cargo-test]
@@ -133,6 +158,34 @@ jobs:
 
       # wrangler.toml pins account_id and the R2 bucket name, so the only
       # thing CI needs to supply is the API token. No config rewriting.
+      - name: Wrangler deploy
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  mirror-deploy:
+    name: Deploy mirror worker
+    needs: [mirror-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      deployments: write
+    defaults:
+      run:
+        working-directory: mirror
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mirror/package-lock.json
+
+      - run: npm ci
+
       - name: Wrangler deploy
         run: npx wrangler deploy
         env:

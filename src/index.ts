@@ -28,17 +28,19 @@ import {
   type SampleDataType,
 } from "./cesium.js";
 import { ProtomapsWaterMask, type TileLocator } from "./water.js";
-import { currentPmtilesDate, pmtilesUrlForDate } from "./protomaps.js";
+import { resolvePmtilesSource } from "./protomaps.js";
 import type { GeodeticBounds } from "./cesium.js";
 
-// Memoize one provider per resolved URL so the PMTiles header fetched at
-// construction time is reused across requests within a worker instance.
+// Memoize one provider per resolved archive key so the PMTiles header
+// fetched at construction time is reused across requests within a worker
+// instance. The key is whatever `resolvePmtilesSource` returns as
+// `sourceUrl` (HTTPS URL for upstream, `r2://…` for the mirror).
 const waterProviders = new Map<string, ProtomapsWaterMask>();
-function getWaterProvider(url: string): ProtomapsWaterMask {
-  let p = waterProviders.get(url);
+function getWaterProvider(key: string, build: () => ProtomapsWaterMask): ProtomapsWaterMask {
+  let p = waterProviders.get(key);
   if (!p) {
-    p = new ProtomapsWaterMask(url);
-    waterProviders.set(url, p);
+    p = build();
+    waterProviders.set(key, p);
   }
   return p;
 }
@@ -85,20 +87,20 @@ function demFreshness(
 async function resolveWatermask(
   tileset: Tileset,
   bounds: GeodeticBounds,
+  env: Env,
 ): Promise<{ url: string; version: string; provider: ProtomapsWaterMask } | null> {
   if (!tileset.watermask) return null;
   if (tileset.watermask.kind === "protomaps-daily") {
-    const date = await currentPmtilesDate();
-    const url = pmtilesUrlForDate(date);
-    const provider = getWaterProvider(url);
+    const { source, tag, sourceUrl } = await resolvePmtilesSource(env);
+    const provider = getWaterProvider(sourceUrl, () => new ProtomapsWaterMask(source));
     let version: string;
     try {
       const locators = await provider.tileLocators(bounds);
       version = await digestLocators(locators);
     } catch {
-      version = `d-${date}`;
+      version = `d-${tag}`;
     }
-    return { url, version, provider };
+    return { url: sourceUrl, version, provider };
   }
   return null;
 }
@@ -390,7 +392,7 @@ async function serveMesh(
   // folded into the cache key BEFORE the cache lookup happens. The version
   // is the PMTiles entry digest for the bounds — daily rebuilds only flip
   // it when the underlying byte ranges actually change.
-  const watermask = includeWaterMask ? await resolveWatermask(tileset, bounds) : null;
+  const watermask = includeWaterMask ? await resolveWatermask(tileset, bounds, env) : null;
 
   const variant: string[] = [];
   if (includeNormals) variant.push("n");
@@ -672,7 +674,7 @@ async function debugWaterMask(url: URL, env: Env): Promise<Response> {
   const tileset = resolveTileset(tilesetName ?? undefined);
   if (!tileset) return notFound(`unknown tileset: ${tilesetName}`);
   const bounds = geodeticTileBounds(z, x, y);
-  const wm = await resolveWatermask(tileset, bounds);
+  const wm = await resolveWatermask(tileset, bounds, env);
   if (!wm) return json({ error: "watermask disabled for tileset", tileset: tileset.name });
 
   const t0 = Date.now();

@@ -11,7 +11,7 @@
 // them. The result is encoded as the Cesium watermask byte payload
 // (Uniform when uniform, Grid otherwise).
 
-import { PMTiles, FetchSource, findTile, zxyToTileId, type Header } from "pmtiles";
+import { PMTiles, FetchSource, findTile, zxyToTileId, type Header, type Source } from "pmtiles";
 import { VectorTile } from "@mapbox/vector-tile";
 import Pbf from "pbf";
 import type { GeodeticBounds } from "./cesium.js";
@@ -50,8 +50,9 @@ interface WmTile {
 export class ProtomapsWaterMask implements WaterMaskProvider {
   #pmtiles: PMTiles;
 
-  constructor(url: string) {
-    this.#pmtiles = new PMTiles(new FetchSource(url));
+  constructor(source: string | Source) {
+    const src = typeof source === "string" ? new FetchSource(source) : source;
+    this.#pmtiles = new PMTiles(src);
   }
 
   async buildMask(bounds: GeodeticBounds, signal?: AbortSignal): Promise<Uint8Array> {
