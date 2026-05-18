@@ -136,7 +136,7 @@ Nothing is re-hosted. Every request reaches upstream over HTTPS, and the attribu
 |---|---|---|
 | [Mapterhorn](https://mapterhorn.com/) | DEM — terrain heights. Global DEM with sea-level heights. A fused product itself — NASADEM, Copernicus GLO-30 and others are blended upstream. | CC BY 4.0 |
 | [EGM2008](https://earth-info.nga.mil/) | Geoid — sea-level ↔ ellipsoid offset. Geoid undulation grid published by the US National Geospatial-Intelligence Agency. Powers the sea-level → ellipsoidal conversion and the standalone geoid data type. | Public domain |
-| [Protomaps daily basemap](https://protomaps.com/) | Water mask — OpenStreetMap-derived water polygons that produce the optional 256×256 water mask attached to quantized-mesh tiles. | ODbL · © OpenStreetMap contributors |
+| [Protomaps daily basemap](https://protomaps.com/) | Water mask — OpenStreetMap-derived water polygons that produce the optional 256×256 water mask attached to quantized-mesh tiles. Snapshotted monthly into our own R2 so the mask keeps working when the upstream daily archive rotates out. | ODbL · © OpenStreetMap contributors |
 
 ## About this service
 
