@@ -9,13 +9,18 @@ account_id = "6bec0134af3a47eff814c2581f42993f"
 [observability]
 enabled = true
 
-# Monthly mirror: the 1st of each month at 03:00 UTC.
+# Monthly mirror: the 1st of each month. Protomaps runs at 03:00 UTC.
+# The Mapterhorn cron `"0 5 1 * *"` is intentionally commented out
+# until planet.pmtiles has been mirrored manually at least once — the
+# 705 GB pull is too expensive to discover problems with on the auto
+# trigger. Re-enable it (and add it back here) once a manual run has
+# produced a complete `mirror/mapterhorn/planet.pmtiles.latest.json`.
 [triggers]
 crons = ["0 3 1 * *"]
 
 # Shared R2 bucket with the main worker. The mirror writes under the
-# `mirror/protomaps/` prefix so the namespace stays isolated from
-# `sources/` and `cache/`.
+# `mirror/protomaps/` and `mirror/mapterhorn/` prefixes so the namespace
+# stays isolated from `sources/` and `cache/`.
 [[r2_buckets]]
 binding = "R2"
 bucket_name = "reearth-terrain"
@@ -27,6 +32,32 @@ bucket_name = "reearth-terrain"
 name = "pmtiles-mirror"
 binding = "PMTILES_MIRROR"
 class_name = "PmtilesMirrorWorkflow"
+
+# Same streaming pattern, but pointed at download.mapterhorn.com.
+# Mirrors one PMTiles archive per instance (planet.pmtiles by default;
+# pass `{archive: "6-33-22.pmtiles"}` for a z13+ regional archive).
+[[workflows]]
+name = "mapterhorn-mirror"
+binding = "MAPTERHORN_MIRROR"
+class_name = "MapterhornMirrorWorkflow"
+# planet.pmtiles at 100 MiB parts is ~6,730 part-N steps, which fits
+# the 10,000 default but eats most of the budget. Bump to the Paid
+# maximum so we keep headroom for future, larger archives.
+[workflows.limits]
+steps = 25_000
+
+# Fans out per-archive Mapterhorn mirrors across the ~458 archives
+# listed in download.mapterhorn.com/download_urls.json, with md5-based
+# diffing so unchanged archives are skipped on subsequent runs.
+[[workflows]]
+name = "mapterhorn-supervisor"
+binding = "MAPTERHORN_SUPERVISOR"
+class_name = "MapterhornSupervisorWorkflow"
+# A full 458-archive run, at concurrency=2 and 30-min poll intervals,
+# is on the order of 6k steps; bump to the Paid max to absorb the
+# long-tail children (planet.pmtiles can poll for days).
+[workflows.limits]
+steps = 25_000
 
 [vars]
 ENVIRONMENT = "production"
@@ -42,3 +73,23 @@ PART_SIZE = "52428800"
 # How many previous mirrored archives to keep around. The Workflow
 # deletes anything older than this after a successful upload.
 RETAIN_VERSIONS = "2"
+
+# --- Mapterhorn mirror settings ---
+MAPTERHORN_UPSTREAM_BASE = "https://download.mapterhorn.com"
+# Archives are versioned by upstream Last-Modified date and live under
+# `${PREFIX}/{YYYYMMDD}/{archive}`; `{archive}.latest.json` sits directly
+# under the prefix.
+MAPTERHORN_MIRROR_PREFIX = "mirror/mapterhorn"
+# 100 MiB parts: planet.pmtiles is ~700 GB, which at 50 MiB would
+# exceed R2's 10,000-part multipart cap. 100 MiB keeps the part buffer
+# within Worker memory and the part count under 8,000.
+MAPTERHORN_PART_SIZE = "104857600"
+MAPTERHORN_RETAIN_VERSIONS = "2"
+# Concurrent child MapterhornMirrorWorkflow instances the supervisor
+# spawns per batch. Kept small — R2 multipart bandwidth and the
+# account-wide Workflow concurrency budget are the binding limits.
+MAPTERHORN_SUPERVISOR_CONCURRENCY = "2"
+# Safety brake: refuse a supervisor run that would touch more than
+# this many archives. The full set is ~458, so 200 catches "first-time
+# mirror" or "everything changed" cases and forces a manual override.
+MAPTERHORN_SUPERVISOR_MAX_ITEMS = "200"

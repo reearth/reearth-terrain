@@ -6,12 +6,21 @@
 interface Env {
   R2: R2Bucket;
   PMTILES_MIRROR: Workflow;
+  MAPTERHORN_MIRROR: Workflow;
+  MAPTERHORN_SUPERVISOR: Workflow;
 
   ENVIRONMENT: string;
   UPSTREAM_BASE: string;
   MIRROR_PREFIX: string;
   PART_SIZE: string;
   RETAIN_VERSIONS: string;
+
+  MAPTERHORN_UPSTREAM_BASE: string;
+  MAPTERHORN_MIRROR_PREFIX: string;
+  MAPTERHORN_PART_SIZE: string;
+  MAPTERHORN_RETAIN_VERSIONS: string;
+  MAPTERHORN_SUPERVISOR_CONCURRENCY?: string;
+  MAPTERHORN_SUPERVISOR_MAX_ITEMS?: string;
 
   // Bearer token for the manual /runs API. Set via:
   //   wrangler secret put MIRROR_TOKEN
