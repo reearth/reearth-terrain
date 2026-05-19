@@ -12,6 +12,7 @@
 // any client-visible breakage.
 
 import { MapterhornSource, type DemSource } from "./dem.js";
+import { MirroredMapterhornSource } from "./mapterhorn-mirror.js";
 
 export interface Attribution {
   name: string;
@@ -64,7 +65,23 @@ export interface Tileset {
   maxZoom: number;
 }
 
-const mapterhorn = new MapterhornSource();
+const upstreamMapterhorn = new MapterhornSource();
+
+// One mirror-backed source per R2 binding. WeakMap so the entry goes
+// away with the binding instead of pinning it across isolate reloads.
+// Reusing the instance across requests is what keeps the per-archive
+// PMTiles directory pages and the decoded-tile LRU resident.
+const mirrorMapterhornByR2 = new WeakMap<R2Bucket, MirroredMapterhornSource>();
+function mirrorMapterhornFor(env: Env): MirroredMapterhornSource {
+  let inst = mirrorMapterhornByR2.get(env.R2);
+  if (!inst) {
+    inst = new MirroredMapterhornSource(env.R2, {
+      prefix: env.MAPTERHORN_MIRROR_PREFIX || "mirror/mapterhorn",
+    });
+    mirrorMapterhornByR2.set(env.R2, inst);
+  }
+  return inst;
+}
 
 const PROTOMAPS_WATERMASK: WatermaskSource = {
   kind: "protomaps-daily",
@@ -84,7 +101,7 @@ const MAPTERHORN_EGM08: Tileset = {
     { name: "Mapterhorn", url: "https://mapterhorn.com/" },
     { name: "EGM2008 (NGA)", url: "https://earth-info.nga.mil/" },
   ],
-  dem: mapterhorn,
+  dem: upstreamMapterhorn,
   geoidKey: "sources/egm08_cog.tif",
   watermask: PROTOMAPS_WATERMASK,
   minZoom: 0,
@@ -97,9 +114,24 @@ export const TILESETS: Record<string, Tileset> = {
 
 export const DEFAULT_TILESET = MAPTERHORN_EGM08.name;
 
-export function resolveTileset(name: string | undefined): Tileset | null {
+/**
+ * Resolve a tileset by name, optionally swapping its DEM source for
+ * the R2-mirrored implementation when `env.MAPTERHORN_SOURCE=mirror`.
+ *
+ * The returned object is either the canonical `TILESETS` entry
+ * (untouched, so reference equality still works for cached lookups
+ * elsewhere) or a shallow copy with `dem` rebound to the mirror source.
+ * The `env` parameter is optional so non-request callers (tests,
+ * tooling) still get the upstream-backed default.
+ */
+export function resolveTileset(name: string | undefined, env?: Env): Tileset | null {
   const key = name ?? DEFAULT_TILESET;
-  return TILESETS[key] ?? null;
+  const base = TILESETS[key];
+  if (!base) return null;
+  if (env?.MAPTERHORN_SOURCE === "mirror" && env.R2 && base.dem === upstreamMapterhorn) {
+    return { ...base, dem: mirrorMapterhornFor(env) };
+  }
+  return base;
 }
 
 /**

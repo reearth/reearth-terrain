@@ -13,6 +13,8 @@ declare namespace Cloudflare {
 		ENABLE_DEBUG: string;
 		PROTOMAPS_SOURCE: string;
 		MIRROR_PREFIX: string;
+		MAPTERHORN_SOURCE: string;
+		MAPTERHORN_MIRROR_PREFIX: string;
 	}
 }
 interface Env extends Cloudflare.Env {}

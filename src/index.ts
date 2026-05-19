@@ -191,13 +191,13 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
       // Tile requests (with or without explicit tileset).
       let m = TILE_WITH_TILESET.exec(url.pathname);
       if (m) {
-        const tileset = resolveTileset(m[1]);
+        const tileset = resolveTileset(m[1], env);
         if (!tileset) return notFound(`unknown tileset: ${m[1]}`);
         return await serveTile(req, ctx, tileset, m[2] as Encoding, m[3] as DataType, Number(m[4]), Number(m[5]), Number(m[6]), m[7] as Format, env);
       }
       m = TILE_DEFAULT.exec(url.pathname);
       if (m) {
-        const tileset = resolveTileset(undefined);
+        const tileset = resolveTileset(undefined, env);
         if (!tileset) return notFound("default tileset not configured");
         return await serveTile(req, ctx, tileset, m[1] as Encoding, m[2] as DataType, Number(m[3]), Number(m[4]), Number(m[5]), m[6] as Format, env);
       }
@@ -205,13 +205,13 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
       // TileJSON metadata.
       m = TILEJSON_WITH_TILESET.exec(url.pathname);
       if (m) {
-        const tileset = resolveTileset(m[1]);
+        const tileset = resolveTileset(m[1], env);
         if (!tileset) return notFound(`unknown tileset: ${m[1]}`);
         return await tilejson(req, tileset, m[2] as Encoding, m[3] as DataType);
       }
       m = TILEJSON_DEFAULT.exec(url.pathname);
       if (m) {
-        const tileset = resolveTileset(undefined);
+        const tileset = resolveTileset(undefined, env);
         if (!tileset) return notFound("default tileset not configured");
         return await tilejson(req, tileset, m[1] as Encoding, m[2] as DataType);
       }
@@ -219,13 +219,13 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
       // Cesium quantized-mesh tile.
       m = MESH_TILE_WITH_TILESET.exec(url.pathname);
       if (m) {
-        const tileset = resolveTileset(m[1]);
+        const tileset = resolveTileset(m[1], env);
         if (!tileset) return notFound(`unknown tileset: ${m[1]}`);
         return await serveMesh(req, ctx, tileset, m[2] as SampleDataType, Number(m[3]), Number(m[4]), Number(m[5]), url.searchParams, env);
       }
       m = MESH_TILE_DEFAULT.exec(url.pathname);
       if (m) {
-        const tileset = resolveTileset(undefined);
+        const tileset = resolveTileset(undefined, env);
         if (!tileset) return notFound("default tileset not configured");
         return await serveMesh(req, ctx, tileset, m[1] as SampleDataType, Number(m[2]), Number(m[3]), Number(m[4]), url.searchParams, env);
       }
@@ -236,13 +236,13 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
       // Cesium layer.json metadata.
       m = MESH_LAYER_WITH_TILESET.exec(url.pathname);
       if (m) {
-        const tileset = resolveTileset(m[1]);
+        const tileset = resolveTileset(m[1], env);
         if (!tileset) return notFound(`unknown tileset: ${m[1]}`);
         return await meshLayerJson(req, tileset, m[2] as SampleDataType);
       }
       m = MESH_LAYER_DEFAULT.exec(url.pathname);
       if (m) {
-        const tileset = resolveTileset(undefined);
+        const tileset = resolveTileset(undefined, env);
         if (!tileset) return notFound("default tileset not configured");
         return await meshLayerJson(req, tileset, m[1] as SampleDataType);
       }
@@ -284,7 +284,7 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
           return debugTile(url, env);
 
         case "/debug/dem":
-          return debugDem(url);
+          return debugDem(url, env);
 
         case "/debug/ellipsoid":
           return debugSamples(url, env);
@@ -613,9 +613,9 @@ async function debugTile(url: URL, env: Env): Promise<Response> {
   });
 }
 
-async function debugDem(url: URL): Promise<Response> {
+async function debugDem(url: URL, env: Env): Promise<Response> {
   const tilesetName = url.searchParams.get("tileset");
-  const tileset = resolveTileset(tilesetName ?? undefined);
+  const tileset = resolveTileset(tilesetName ?? undefined, env);
   if (!tileset) return notFound(`unknown tileset: ${tilesetName}`);
   const z = Number(url.searchParams.get("z") ?? "10");
   const x = Number(url.searchParams.get("x") ?? "909");
@@ -642,7 +642,7 @@ async function debugDem(url: URL): Promise<Response> {
 
 async function debugSamples(url: URL, env: Env): Promise<Response> {
   const tilesetName = url.searchParams.get("tileset");
-  const tileset = resolveTileset(tilesetName ?? undefined);
+  const tileset = resolveTileset(tilesetName ?? undefined, env);
   if (!tileset) return notFound(`unknown tileset: ${tilesetName}`);
   const dataType = (url.searchParams.get("type") ?? "ellipsoid") as DataType;
   const z = Number(url.searchParams.get("z") ?? "10");
@@ -671,7 +671,7 @@ async function debugWaterMask(url: URL, env: Env): Promise<Response> {
   const x = Number(url.searchParams.get("x") ?? "1051");
   const y = Number(url.searchParams.get("y") ?? "809");
   const tilesetName = url.searchParams.get("tileset");
-  const tileset = resolveTileset(tilesetName ?? undefined);
+  const tileset = resolveTileset(tilesetName ?? undefined, env);
   if (!tileset) return notFound(`unknown tileset: ${tilesetName}`);
   const bounds = geodeticTileBounds(z, x, y);
   const wm = await resolveWatermask(tileset, bounds, env);

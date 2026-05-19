@@ -77,3 +77,17 @@ PROTOMAPS_SOURCE = "mirror"
 # `{date}.pmtiles` snapshots. Must match the mirror worker's
 # `MIRROR_PREFIX`. Only consulted when `PROTOMAPS_SOURCE=mirror`.
 MIRROR_PREFIX = "mirror/protomaps"
+# Mapterhorn DEM backend. "upstream" (default) reads tiles directly
+# from tiles.mapterhorn.com; "mirror" reads PMTiles archives that the
+# `reearth-terrain-mirror` worker has snapshotted into R2. Switch to
+# "mirror" only after the mirror has populated at least
+# `planet.pmtiles` and the regions you care about — missing archives
+# surface to clients as no-coverage tiles. Pair the switch with a
+# `Tileset.version` bump so the per-tile freshness probe (which the
+# mirror source intentionally doesn't expose) doesn't leave stale L2
+# entries around.
+MAPTERHORN_SOURCE = "upstream"
+# R2 key prefix where the mirror worker writes `{archive}.latest.json`
+# pointers and `{YYYYMMDD}/{archive}` snapshots. Must match the mirror
+# worker's `MAPTERHORN_MIRROR_PREFIX`.
+MAPTERHORN_MIRROR_PREFIX = "mirror/mapterhorn"
