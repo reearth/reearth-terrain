@@ -77,15 +77,20 @@ PROTOMAPS_SOURCE = "mirror"
 # `{date}.pmtiles` snapshots. Must match the mirror worker's
 # `MIRROR_PREFIX`. Only consulted when `PROTOMAPS_SOURCE=mirror`.
 MIRROR_PREFIX = "mirror/protomaps"
-# Mapterhorn DEM backend. "upstream" (default) reads tiles directly
-# from tiles.mapterhorn.com; "mirror" reads PMTiles archives that the
-# `reearth-terrain-mirror` worker has snapshotted into R2. Switch to
-# "mirror" only after the mirror has populated at least
-# `planet.pmtiles` and the regions you care about — missing archives
-# surface to clients as no-coverage tiles. Pair the switch with a
-# `Tileset.version` bump so the per-tile freshness probe (which the
-# mirror source intentionally doesn't expose) doesn't leave stale L2
-# entries around.
+# Mapterhorn DEM backend. Three modes:
+#   - "upstream" (default): tiles.mapterhorn.com direct.
+#   - "mirror": all reads from R2 snapshots; z ≥ 13 in regions without
+#     a mirrored archive return as no-coverage. Use only after sweep
+#     / rotation has populated every region you care about.
+#   - "hybrid": planet.pmtiles (z ≤ 12) from R2; for z ≥ 13, use the
+#     mirrored regional archive when one exists in R2 and fall back to
+#     tiles.mapterhorn.com otherwise. The mirrored-regional set is
+#     discovered by R2-listing `{archive}.latest.json` pointers, so
+#     adding a new regional via sweep / rotation takes effect on the
+#     read side within one isolate refresh — no code change.
+# Pair "mirror" or "hybrid" with a Tileset.version bump so the L2
+# cache turns over cleanly; the mirror source intentionally omits the
+# per-tile freshness probe that the upstream source uses.
 MAPTERHORN_SOURCE = "upstream"
 # R2 key prefix where the mirror worker writes `{archive}.latest.json`
 # pointers and `{YYYYMMDD}/{archive}` snapshots. Must match the mirror

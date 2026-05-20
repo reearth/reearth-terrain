@@ -12,7 +12,7 @@
 // any client-visible breakage.
 
 import { MapterhornSource, type DemSource } from "./dem.js";
-import { MirroredMapterhornSource } from "./mapterhorn-mirror.js";
+import { HybridMapterhornSource, MirroredMapterhornSource } from "./mapterhorn-mirror.js";
 
 export interface Attribution {
   name: string;
@@ -83,6 +83,21 @@ function mirrorMapterhornFor(env: Env): MirroredMapterhornSource {
   return inst;
 }
 
+// Hybrid source reuses the same per-R2 mirror instance so the PMTiles
+// handle pool and decoded-tile LRU stay shared with pure-mirror reads
+// during a mode flip.
+const hybridMapterhornByR2 = new WeakMap<R2Bucket, HybridMapterhornSource>();
+function hybridMapterhornFor(env: Env): HybridMapterhornSource {
+  let inst = hybridMapterhornByR2.get(env.R2);
+  if (!inst) {
+    inst = new HybridMapterhornSource(mirrorMapterhornFor(env), upstreamMapterhorn, env.R2, {
+      prefix: env.MAPTERHORN_MIRROR_PREFIX || "mirror/mapterhorn",
+    });
+    hybridMapterhornByR2.set(env.R2, inst);
+  }
+  return inst;
+}
+
 const PROTOMAPS_WATERMASK: WatermaskSource = {
   kind: "protomaps-daily",
   attribution: [
@@ -128,8 +143,9 @@ export function resolveTileset(name: string | undefined, env?: Env): Tileset | n
   const key = name ?? DEFAULT_TILESET;
   const base = TILESETS[key];
   if (!base) return null;
-  if (env?.MAPTERHORN_SOURCE === "mirror" && env.R2 && base.dem === upstreamMapterhorn) {
-    return { ...base, dem: mirrorMapterhornFor(env) };
+  if (env?.R2 && base.dem === upstreamMapterhorn) {
+    if (env.MAPTERHORN_SOURCE === "mirror") return { ...base, dem: mirrorMapterhornFor(env) };
+    if (env.MAPTERHORN_SOURCE === "hybrid") return { ...base, dem: hybridMapterhornFor(env) };
   }
   return base;
 }

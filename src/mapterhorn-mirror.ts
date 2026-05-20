@@ -168,7 +168,116 @@ export class MirroredMapterhornSource implements DemSource {
   }
 }
 
-function regionalArchiveName(z: number, x: number, y: number): string {
+export function regionalArchiveName(z: number, x: number, y: number): string {
   const shift = z - 6;
   return `6-${x >> shift}-${y >> shift}.pmtiles`;
+}
+
+/**
+ * DEM source that uses the mirrored `planet.pmtiles` for z ≤ 12 and,
+ * for z ≥ 13, picks between the mirrored regional archive (when one
+ * exists in R2) and the upstream `tiles.mapterhorn.com` server.
+ *
+ * Membership in the mirrored regional set is discovered by R2-listing
+ * `${prefix}/*.latest.json` once per isolate (1 h TTL). This means a
+ * sweep or rotation run that adds a new regional archive becomes effective
+ * for hybrid reads when the isolate's cache next refreshes, with no
+ * code change. Test/sandbox archives that happen to live under the
+ * prefix are picked up automatically — drop them from R2 if you want
+ * them out of rotation.
+ *
+ * Sparse-tile semantics match the pure-mirror source: if the regional
+ * archive is mirrored but the specific XYZ tile isn't present, we
+ * return null rather than falling back to upstream. The upstream
+ * doesn't have that data either (Mapterhorn ships the same sparse set
+ * to both surfaces), so the extra request would only pollute caches.
+ */
+export class HybridMapterhornSource implements DemSource {
+  readonly name = "mapterhorn-hybrid";
+  #mirror: MirroredMapterhornSource;
+  #upstream: DemSource;
+  #r2: R2Bucket;
+  #prefix: string;
+  #planetMaxZoom: number;
+  #mirroredSet: Promise<Set<string>> | null = null;
+  #mirroredExpires = 0;
+
+  constructor(
+    mirror: MirroredMapterhornSource,
+    upstream: DemSource,
+    r2: R2Bucket,
+    opts: { prefix?: string; planetMaxZoom?: number } = {},
+  ) {
+    this.#mirror = mirror;
+    this.#upstream = upstream;
+    this.#r2 = r2;
+    this.#prefix = (opts.prefix ?? "mirror/mapterhorn").replace(/\/+$/, "");
+    this.#planetMaxZoom = opts.planetMaxZoom ?? 12;
+  }
+
+  read(z: number, x: number, y: number, signal?: AbortSignal): Promise<DemTile | null> {
+    if (z <= this.#planetMaxZoom) return this.#mirror.read(z, x, y, signal);
+    return (async () => {
+      const archive = regionalArchiveName(z, x, y);
+      const set = await this.#mirroredArchives();
+      if (set.has(archive)) return this.#mirror.read(z, x, y, signal);
+      return this.#upstream.read(z, x, y, signal);
+    })();
+  }
+
+  // Freshness only matters on the upstream branch — the mirror is
+  // pinned by snapshot version. We have to peek at the mirrored set
+  // to know which branch a given z/x/y would use, so the signature
+  // stays async even for the z ≤ 12 short-circuit.
+  freshness(z: number, x: number, y: number): Promise<Date | null> {
+    if (z <= this.#planetMaxZoom) return Promise.resolve(null);
+    return (async () => {
+      const archive = regionalArchiveName(z, x, y);
+      const set = await this.#mirroredArchives();
+      if (set.has(archive)) return null;
+      const probe = this.#upstream.freshness;
+      return probe ? probe.call(this.#upstream, z, x, y) : null;
+    })();
+  }
+
+  async #mirroredArchives(): Promise<Set<string>> {
+    if (this.#mirroredSet && this.#mirroredExpires > Date.now()) return this.#mirroredSet;
+    const p = this.#listMirroredArchives();
+    this.#mirroredSet = p;
+    this.#mirroredExpires = Date.now() + 60 * 60 * 1000;
+    p.catch(() => {
+      // Drop the failed cache so the next call retries instead of
+      // serving an empty set indefinitely.
+      this.#mirroredSet = null;
+      this.#mirroredExpires = 0;
+    });
+    return p;
+  }
+
+  async #listMirroredArchives(): Promise<Set<string>> {
+    const set = new Set<string>();
+    const suffix = ".latest.json";
+    // `delimiter: "/"` keeps the listing to the root of the prefix,
+    // skipping the `{YYYYMMDD}/` subdirectories that hold the actual
+    // PMTiles bodies.
+    let cursor: string | undefined;
+    do {
+      const listed = await this.#r2.list({
+        prefix: `${this.#prefix}/`,
+        delimiter: "/",
+        cursor,
+      });
+      for (const o of listed.objects) {
+        const rest = o.key.slice(this.#prefix.length + 1);
+        if (!rest.endsWith(suffix)) continue;
+        const archive = rest.slice(0, -suffix.length);
+        // Skip planet.pmtiles — z ≤ 12 always uses the mirror branch
+        // directly, regional set is the only thing we consult here.
+        if (archive === "planet.pmtiles") continue;
+        set.add(archive);
+      }
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+    return set;
+  }
 }
