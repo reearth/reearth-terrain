@@ -91,7 +91,7 @@ MIRROR_PREFIX = "mirror/protomaps"
 # Pair "mirror" or "hybrid" with a Tileset.version bump so the L2
 # cache turns over cleanly; the mirror source intentionally omits the
 # per-tile freshness probe that the upstream source uses.
-MAPTERHORN_SOURCE = "upstream"
+MAPTERHORN_SOURCE = "hybrid"
 # R2 key prefix where the mirror worker writes `{archive}.latest.json`
 # pointers and `{YYYYMMDD}/{archive}` snapshots. Must match the mirror
 # worker's `MAPTERHORN_MIRROR_PREFIX`.
