@@ -12,14 +12,21 @@
 
 import { PmtilesMirrorWorkflow } from "./workflow.js";
 import { MapterhornMirrorWorkflow } from "./mapterhorn-workflow.js";
-import { MapterhornSupervisorWorkflow } from "./supervisor-workflow.js";
+import { MapterhornSweepWorkflow } from "./sweep-workflow.js";
+import { MapterhornRotationWorkflow } from "./rotation-workflow.js";
 
-export { PmtilesMirrorWorkflow, MapterhornMirrorWorkflow, MapterhornSupervisorWorkflow };
+export {
+  PmtilesMirrorWorkflow,
+  MapterhornMirrorWorkflow,
+  MapterhornSweepWorkflow,
+  MapterhornRotationWorkflow,
+};
 
 // Wired in wrangler.toml `triggers.crons`. Each cron maps to one
-// source — the strings must stay in sync with the toml.
+// workflow — the strings must stay in sync with the toml.
 const PROTOMAPS_CRON = "0 3 1 * *";
 const MAPTERHORN_CRON = "0 5 1 * *";
+const MAPTERHORN_ROTATION_CRON = "0 6 * * *";
 
 type Source = "protomaps" | "mapterhorn";
 
@@ -27,6 +34,10 @@ export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     if (event.cron === MAPTERHORN_CRON) {
       ctx.waitUntil(startMapterhornRun(env));
+      return;
+    }
+    if (event.cron === MAPTERHORN_ROTATION_CRON) {
+      ctx.waitUntil(startMapterhornRotationRun(env));
       return;
     }
     // Default to Protomaps so an unknown cron string still produces a
@@ -55,20 +66,35 @@ export default {
       });
     }
 
-    // Supervisor endpoints (POST /supervisor/mapterhorn, GET /supervisor/mapterhorn/{id}).
-    // Kept separate from /runs because the supervisor isn't a tileset
-    // source — it orchestrates many MAPTERHORN_MIRROR runs.
-    if (req.method === "POST" && parts[0] === "supervisor" && parts[1] === "mapterhorn" && parts.length === 2) {
+    // Orchestrator endpoints. Sweep (operator bulk) and rotation
+    // (steady-state maintenance) are both orchestrators that spawn
+    // MAPTERHORN_MIRROR children — separated from /runs (single
+    // executor invocation) by namespace.
+    if (req.method === "POST" && parts[0] === "sweep" && parts[1] === "mapterhorn" && parts.length === 2) {
       if (!authorized(req, env)) return json({ error: "unauthorized" }, 401);
       const body = await readJson(req).catch(() => ({}));
       const params = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-      const instance = await env.MAPTERHORN_SUPERVISOR.create({ params });
+      const instance = await env.MAPTERHORN_SWEEP.create({ params });
       return json({ id: instance.id, status: await instance.status() }, 202);
     }
-    if (req.method === "GET" && parts[0] === "supervisor" && parts[1] === "mapterhorn" && parts.length === 3) {
+    if (req.method === "GET" && parts[0] === "sweep" && parts[1] === "mapterhorn" && parts.length === 3) {
       if (!authorized(req, env)) return json({ error: "unauthorized" }, 401);
       const id = parts[2] ?? "";
-      const instance = await env.MAPTERHORN_SUPERVISOR.get(id);
+      const instance = await env.MAPTERHORN_SWEEP.get(id);
+      return json({ id, status: await instance.status() });
+    }
+
+    if (req.method === "POST" && parts[0] === "rotation" && parts[1] === "mapterhorn" && parts.length === 2) {
+      if (!authorized(req, env)) return json({ error: "unauthorized" }, 401);
+      const body = await readJson(req).catch(() => ({}));
+      const params = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+      const instance = await env.MAPTERHORN_ROTATION.create({ params });
+      return json({ id: instance.id, status: await instance.status() }, 202);
+    }
+    if (req.method === "GET" && parts[0] === "rotation" && parts[1] === "mapterhorn" && parts.length === 3) {
+      if (!authorized(req, env)) return json({ error: "unauthorized" }, 401);
+      const id = parts[2] ?? "";
+      const instance = await env.MAPTERHORN_ROTATION.get(id);
       return json({ id, status: await instance.status() });
     }
 
@@ -103,10 +129,15 @@ async function startProtomapsRun(env: Env): Promise<void> {
 
 async function startMapterhornRun(env: Env): Promise<void> {
   // Scheduled run always mirrors `planet.pmtiles`. Regional z13+
-  // archives are large enough that we expect them to be triggered
-  // manually via POST /runs/mapterhorn.
+  // archives come in via the daily rotation instead — see
+  // MapterhornRotationWorkflow.
   const instance = await env.MAPTERHORN_MIRROR.create({ params: {} });
   console.log(JSON.stringify({ event: "mirror_scheduled", source: "mapterhorn", id: instance.id }));
+}
+
+async function startMapterhornRotationRun(env: Env): Promise<void> {
+  const instance = await env.MAPTERHORN_ROTATION.create({ params: {} });
+  console.log(JSON.stringify({ event: "mirror_scheduled", source: "mapterhorn-rotation", id: instance.id }));
 }
 
 async function startRun(env: Env, source: Source, params: Record<string, unknown>) {

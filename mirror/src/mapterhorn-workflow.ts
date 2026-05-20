@@ -32,20 +32,40 @@ export interface MapterhornMirrorParams {
   archive?: string;
 }
 
-interface InitResult {
-  archive: string;
-  url: string;
-  version: string;
-  size: number;
-  partSize: number;
-  partCount: number;
-  uploadId: string;
-  key: string;
-}
+type InitResult =
+  | {
+      kind: "fresh";
+      archive: string;
+      url: string;
+      version: string;
+      size: number;
+      partSize: number;
+      partCount: number;
+      uploadId: string;
+      key: string;
+    }
+  | {
+      // Pointer already records this exact version with a valid body
+      // in R2, so the multipart pull is skipped. The pointer is still
+      // re-written so `mirroredAt` advances — that's what the daily
+      // rotation uses to advance through archives.
+      kind: "skip";
+      archive: string;
+      url: string;
+      version: string;
+      size: number;
+      key: string;
+    };
 
 interface CompletedPart {
   partNumber: number;
   etag: string;
+}
+
+interface ExistingPointer {
+  version: string;
+  key: string;
+  size: number;
 }
 
 const DEFAULT_ARCHIVE = "planet.pmtiles";
@@ -78,6 +98,22 @@ export class MapterhornMirrorWorkflow extends WorkflowEntrypoint<Env, Mapterhorn
         ? formatUtcDate(lmDate)
         : formatUtcDate(new Date());
 
+      // Skip path: same version + size already mirrored, archive body
+      // still present. Catches monthly / daily cron re-runs where the
+      // upstream hasn't been rebuilt. We still re-write the pointer
+      // downstream so `mirroredAt` advances.
+      const pointerKey = `${this.env.MAPTERHORN_MIRROR_PREFIX}/${archive}.latest.json`;
+      const existingPtr = await this.env.R2.get(pointerKey);
+      if (existingPtr) {
+        const parsed = (await existingPtr.json()) as ExistingPointer;
+        if (parsed.version === version && parsed.size === size) {
+          const body = await this.env.R2.head(parsed.key);
+          if (body) {
+            return { kind: "skip", archive, url, version, size, key: parsed.key };
+          }
+        }
+      }
+
       const partSize = Number.parseInt(this.env.MAPTERHORN_PART_SIZE, 10);
       if (!Number.isFinite(partSize) || partSize < 5 * 1024 * 1024) {
         throw new Error(`MAPTERHORN_PART_SIZE must be >= 5 MiB, got ${this.env.MAPTERHORN_PART_SIZE}`);
@@ -99,8 +135,52 @@ export class MapterhornMirrorWorkflow extends WorkflowEntrypoint<Env, Mapterhorn
         },
       });
 
-      return { archive, url, version, size, partSize, partCount, uploadId: mpu.uploadId, key };
+      return { kind: "fresh", archive, url, version, size, partSize, partCount, uploadId: mpu.uploadId, key };
     });
+
+    console.log(
+      JSON.stringify({
+        event: "mirror_init",
+        archive: init.archive,
+        version: init.version,
+        size: init.size,
+        kind: init.kind,
+        ...(init.kind === "fresh" ? { partCount: init.partCount, partSize: init.partSize } : {}),
+      }),
+    );
+
+    if (init.kind === "skip") {
+      await step.do("refresh-pointer", async () => {
+        const body = JSON.stringify({
+          archive: init.archive,
+          version: init.version,
+          key: init.key,
+          size: init.size,
+          upstream: init.url,
+          mirroredAt: new Date().toISOString(),
+        });
+        await this.env.R2.put(`${this.env.MAPTERHORN_MIRROR_PREFIX}/${init.archive}.latest.json`, body, {
+          httpMetadata: { contentType: "application/json" },
+        });
+      });
+      console.log(
+        JSON.stringify({
+          event: "mirror_skipped",
+          archive: init.archive,
+          version: init.version,
+          key: init.key,
+          size: init.size,
+        }),
+      );
+      return {
+        ok: true,
+        skipped: true,
+        archive: init.archive,
+        version: init.version,
+        key: init.key,
+        size: init.size,
+      };
+    }
 
     // Sequential range fetches — same rationale as the Protomaps
     // workflow: keeps peak memory bounded and a transient hiccup only
@@ -172,6 +252,17 @@ export class MapterhornMirrorWorkflow extends WorkflowEntrypoint<Env, Mapterhorn
         .map((v) => `${this.env.MAPTERHORN_MIRROR_PREFIX}/${v}/${init.archive}`);
       if (toDelete.length > 0) await this.env.R2.delete(toDelete);
     });
+
+    console.log(
+      JSON.stringify({
+        event: "mirror_complete",
+        archive: init.archive,
+        version: init.version,
+        key: init.key,
+        size: init.size,
+        parts: parts.length,
+      }),
+    );
 
     return {
       ok: true,

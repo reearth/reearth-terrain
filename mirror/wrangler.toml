@@ -9,14 +9,24 @@ account_id = "6bec0134af3a47eff814c2581f42993f"
 [observability]
 enabled = true
 
-# Monthly mirror: the 1st of each month. Protomaps runs at 03:00 UTC.
-# The Mapterhorn cron `"0 5 1 * *"` is intentionally commented out
-# until planet.pmtiles has been mirrored manually at least once — the
-# 705 GB pull is too expensive to discover problems with on the auto
-# trigger. Re-enable it (and add it back here) once a manual run has
-# produced a complete `mirror/mapterhorn/planet.pmtiles.latest.json`.
+# Monthly: Protomaps at 03:00 UTC on the 1st, Mapterhorn planet at
+# 05:00 UTC on the 1st. Staggered so the ~700 GB Mapterhorn pull
+# doesn't compete with the Protomaps run for the upstream / R2
+# budget.
+#
+# Daily: 06:00 UTC fires the Mapterhorn regional rotation, which
+# mirrors a handful of z13+ archives per day (stalest first, shallow
+# max_zoom first). Combined with the per-archive workflow's
+# version-skip, the rotation is idempotent: unchanged archives
+# short-circuit in seconds and only the mirroredAt pointer is
+# refreshed, so it advances even when upstream isn't rebuilding
+# anything.
+#
+# scheduled() in src/index.ts routes by `event.cron`. See
+# mirror/mapterhorn/README.md for the initial-mirror timing that
+# informed the schedule.
 [triggers]
-crons = ["0 3 1 * *"]
+crons = ["0 3 1 * *", "0 5 1 * *", "0 6 * * *"]
 
 # Shared R2 bucket with the main worker. The mirror writes under the
 # `mirror/protomaps/` and `mirror/mapterhorn/` prefixes so the namespace
@@ -46,18 +56,26 @@ class_name = "MapterhornMirrorWorkflow"
 [workflows.limits]
 steps = 25_000
 
-# Fans out per-archive Mapterhorn mirrors across the ~458 archives
-# listed in download.mapterhorn.com/download_urls.json, with md5-based
-# diffing so unchanged archives are skipped on subsequent runs.
+# Bulk sweep — fans out per-archive Mapterhorn mirrors across the
+# ~458 archives listed in download.mapterhorn.com/download_urls.json,
+# with md5-based diffing so unchanged archives are skipped on
+# subsequent runs. Operator-triggered for "fill this bbox now".
 [[workflows]]
-name = "mapterhorn-supervisor"
-binding = "MAPTERHORN_SUPERVISOR"
-class_name = "MapterhornSupervisorWorkflow"
+name = "mapterhorn-sweep"
+binding = "MAPTERHORN_SWEEP"
+class_name = "MapterhornSweepWorkflow"
 # A full 458-archive run, at concurrency=2 and 30-min poll intervals,
 # is on the order of 6k steps; bump to the Paid max to absorb the
 # long-tail children (planet.pmtiles can poll for days).
 [workflows.limits]
 steps = 25_000
+
+# Daily rotation — picks the stalest few z13+ regional archives each
+# day and runs the executor against them. Steady-state maintenance.
+[[workflows]]
+name = "mapterhorn-rotation"
+binding = "MAPTERHORN_ROTATION"
+class_name = "MapterhornRotationWorkflow"
 
 [vars]
 ENVIRONMENT = "production"
@@ -85,11 +103,19 @@ MAPTERHORN_MIRROR_PREFIX = "mirror/mapterhorn"
 # within Worker memory and the part count under 8,000.
 MAPTERHORN_PART_SIZE = "104857600"
 MAPTERHORN_RETAIN_VERSIONS = "2"
-# Concurrent child MapterhornMirrorWorkflow instances the supervisor
+# Concurrent child MapterhornMirrorWorkflow instances the sweep
 # spawns per batch. Kept small — R2 multipart bandwidth and the
 # account-wide Workflow concurrency budget are the binding limits.
-MAPTERHORN_SUPERVISOR_CONCURRENCY = "2"
-# Safety brake: refuse a supervisor run that would touch more than
-# this many archives. The full set is ~458, so 200 catches "first-time
-# mirror" or "everything changed" cases and forces a manual override.
-MAPTERHORN_SUPERVISOR_MAX_ITEMS = "200"
+MAPTERHORN_SWEEP_CONCURRENCY = "2"
+# Safety brake: refuse a sweep that would touch more than this many
+# archives. The full set is ~458, so 200 catches "first-time mirror"
+# or "everything changed" cases and forces a manual override.
+MAPTERHORN_SWEEP_MAX_ITEMS = "200"
+
+# How many archives the daily rotation mirrors per cron firing.
+# Sequential within one workflow instance — increase to accelerate
+# initial coverage at the cost of longer single-cron wall time.
+# Sort prefers shallow max_zoom first, so most early picks are tiny
+# z=13-only archives (~232 MB avg) that finish in seconds via the
+# version-skip path or in <1 min cold.
+MAPTERHORN_ROTATION_DEFAULT_COUNT = "5"
