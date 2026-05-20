@@ -130,7 +130,7 @@ All paths share the shape `/{tileset}/{encoding}/{data_type}/...`.
 
 ## Three open datasets, stitched live.
 
-Nothing is re-hosted. Every request reaches upstream over HTTPS, and the attributions below are injected into TileJSON and Cesium `layer.json` so your clients display them automatically.
+Most bytes are served from our own R2 mirror. EGM2008 ships as a COG in R2 from day one, the Protomaps water mask is snapshotted monthly into R2, and Mapterhorn planet tiles (z ≤ 12) are mirrored to R2 — higher zooms are mirrored progressively, with any not-yet-mirrored areas falling back to the upstream Mapterhorn endpoint over HTTPS. The attributions below are injected into TileJSON and Cesium `layer.json` so your clients display them automatically.
 
 | Source | Role | License |
 |---|---|---|
@@ -144,7 +144,7 @@ Nothing is re-hosted. Every request reaches upstream over HTTPS, and the attribu
 
 The compute runs on Cloudflare Workers, with R2 holding both the source datasets and a content-addressed tile cache. The project's own code is MIT-licensed and lives [on GitHub](https://github.com/reearth/reearth-terrain).
 
-By design, every tile is built on demand from the upstream sources — there is no batch pipeline, and we don't publish pre-rendered archives like a PMTiles bundle. New upstream data shows up in the next request, and we never have to babysit a re-tile job.
+By design, source datasets are mirrored into R2, but the tiles we serve — quantized-mesh, raster terrain, the water mask attached to a mesh — are assembled on demand from those sources. There is no batch re-tile pipeline and we don't publish pre-rendered tile archives; refreshing a mirror is enough for new data to show up in the next request.
 
 ### Operating model
 
