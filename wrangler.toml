@@ -3,10 +3,6 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Re:Earth Cloudflare account. Pin so deploys don't go to whatever the
-# logged-in user's default account happens to be.
-account_id = "6bec0134af3a47eff814c2581f42993f"
-
 # Custom domain — assumes the reearth.land zone lives in the same
 # account and `terrain` is reserved for this worker only.
 routes = [{ pattern = "terrain.reearth.land", custom_domain = true }]
