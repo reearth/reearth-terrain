@@ -108,6 +108,29 @@ All paths share the shape `/{tileset}/{encoding}/{data_type}/...`.
 | `GET /{tileset}/cesium-mesh/{data_type}/layer.json` | Cesium `layer.json` |
 | `GET /{tileset}/{mapbox\|terrarium}/{data_type}/{z}/{x}/{y}.{webp\|png}` | raster terrain tile |
 | `GET /{tileset}/{mapbox\|terrarium}/{data_type}/tilejson.json` | TileJSON 3.0.0 |
+| `GET /{tileset}/watermask/{z}/{x}/{y}.{webp\|png}` | water mask raster tile (Web Mercator XYZ) |
+| `GET /{tileset}/watermask-tms/{z}/{x}/{y}.{webp\|png}` | water mask raster tile (TMS Geographic, Cesium-compatible) |
+| `GET /{tileset}/{watermask\|watermask-tms}/tilejson.json` | TileJSON 3.0.0 for the watermask raster |
+
+### Watermask raster output
+
+`watermask` / `watermask-tms` expose the same Protomaps-derived water polygons that `cesium-mesh?extensions=watermask` attaches to mesh tiles, but as a 256×256 RGBA raster you can drop into any map renderer as an overlay. Water is opaque black (`#000000`, α=255), land is fully transparent — so MapLibre's `raster-opacity` / `raster-color` (or shadow / blend layers on top) can recolor or composite the mask without any extra processing.
+
+```js
+map.addSource("water", {
+  type: "raster",
+  url: "https://terrain.reearth.land/watermask/tilejson.json",
+  tileSize: 256,
+});
+map.addLayer({
+  id: "water",
+  type: "raster",
+  source: "water",
+  paint: { "raster-color": "#1f6feb" }, // tint the opaque-black mask
+});
+```
+
+Use `watermask-tms` when you need the tile coordinates to line up 1:1 with `cesium-mesh` (TMS Geographic). For ordinary 2D MapLibre / Leaflet / Mapbox GL stacks, pick `watermask` (Web Mercator XYZ — the projection Protomaps publishes natively).
 
 ### Cesium extensions (mesh only)
 

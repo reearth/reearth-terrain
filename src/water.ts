@@ -38,7 +38,33 @@ export interface TileLocator {
 // 256x256 output window correctly — coords are zoom-independent so this
 // works as a free upsampling step.
 const MAX_PMTILES_ZOOM = 15;
-const MASK_SIZE = 256;
+export const MASK_SIZE = 256;
+
+/**
+ * Expand a Cesium-style watermask payload to a 256x256 RGBA buffer where
+ * water is opaque black (R=G=B=0, A=mask value) and land is fully
+ * transparent. `buildMask` returns either 1 byte (Uniform — every pixel
+ * land or every pixel water) or 65536 bytes (Grid); both collapse to the
+ * same RGBA shape here.
+ */
+export function maskToRgba(mask: Uint8Array): Uint8Array {
+  const pixels = MASK_SIZE * MASK_SIZE;
+  const rgba = new Uint8Array(pixels * 4);
+  if (mask.length === 1) {
+    const a = mask[0]!;
+    if (a !== 0) {
+      for (let i = 3; i < rgba.length; i += 4) rgba[i] = a;
+    }
+    return rgba;
+  }
+  if (mask.length !== pixels) {
+    throw new Error(`unexpected watermask length: ${mask.length}`);
+  }
+  for (let i = 0; i < pixels; i++) {
+    rgba[i * 4 + 3] = mask[i]!;
+  }
+  return rgba;
+}
 
 interface WmTile {
   z: number;

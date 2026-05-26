@@ -4,6 +4,7 @@
 //! — this file is just a thin wasm-bindgen surface that matches what
 //! the TypeScript side calls.
 
+use image::ImageEncoder;
 use terrain_codec::heightmap::container::{
     decode_image, rgb_to_png as container_rgb_to_png, rgb_to_webp as container_rgb_to_webp,
 };
@@ -220,6 +221,40 @@ pub fn rgb_to_webp(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>, JsErr
 pub fn rgb_to_png(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>, JsError> {
     container_rgb_to_png(rgb, width, height)
         .map_err(|e| JsError::new(&format!("png encode failed: {e}")))
+}
+
+#[wasm_bindgen]
+pub fn rgba_to_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, JsError> {
+    assert_rgba_len(rgba, width, height)?;
+    let mut out = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut out)
+        .write_image(rgba, width, height, image::ExtendedColorType::Rgba8)
+        .map_err(|e| JsError::new(&format!("png encode failed: {e}")))?;
+    Ok(out)
+}
+
+#[wasm_bindgen]
+pub fn rgba_to_webp(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, JsError> {
+    assert_rgba_len(rgba, width, height)?;
+    let mut out = Vec::new();
+    image::codecs::webp::WebPEncoder::new_lossless(&mut out)
+        .write_image(rgba, width, height, image::ExtendedColorType::Rgba8)
+        .map_err(|e| JsError::new(&format!("webp encode failed: {e}")))?;
+    Ok(out)
+}
+
+fn assert_rgba_len(rgba: &[u8], width: u32, height: u32) -> Result<(), JsError> {
+    let expected = (width as usize) * (height as usize) * 4;
+    if rgba.len() != expected {
+        return Err(JsError::new(&format!(
+            "rgba length {} does not match {}x{}x4 = {}",
+            rgba.len(),
+            width,
+            height,
+            expected
+        )));
+    }
+    Ok(())
 }
 
 // ---------- Terrarium image decoders ----------

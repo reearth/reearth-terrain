@@ -107,6 +107,11 @@ All paths share the shape `/{tileset}/{encoding}/{data_type}/...`.
 | `GET /{tileset}/cesium-mesh/{data_type}/layer.json` | Cesium `layer.json` |
 | `GET /{tileset}/{mapbox\|terrarium}/{data_type}/{z}/{x}/{y}.{webp\|png}` | raster terrain tile |
 | `GET /{tileset}/{mapbox\|terrarium}/{data_type}/tilejson.json` | TileJSON 3.0.0 |
+| `GET /{tileset}/watermask/{z}/{x}/{y}.{webp\|png}` | water mask raster tile (Web Mercator XYZ) |
+| `GET /{tileset}/watermask-tms/{z}/{x}/{y}.{webp\|png}` | water mask raster tile (TMS Geographic, Cesium-compatible) |
+| `GET /{tileset}/{watermask\|watermask-tms}/tilejson.json` | TileJSON 3.0.0 for the watermask raster |
+
+The watermask raster is a 256×256 RGBA tile: water is opaque black (`#000000`, α=255), land is fully transparent. Drop it into MapLibre / Mapbox GL as an overlay and tint with `raster-color` if you want it colored.
 
 ### Cesium extensions (mesh only)
 

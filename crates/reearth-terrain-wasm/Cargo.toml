@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 wasm-bindgen = { workspace = true }
 terrain-codec = { version = "0.2.1", features = ["png", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "webp"] }
 
 [package.metadata.wasm-pack.profile.release]
 # We invoke a system wasm-opt from scripts/build-wasm.mjs instead, because
