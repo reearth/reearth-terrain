@@ -187,17 +187,14 @@
         pointer-events: none;
       }
       .hero-content {
-        position: relative;
+        position: absolute;
         z-index: 2;
-        height: 100%;
+        /* Leave a thin strip at the bottom so Cesium's credit container
+           stays clickable (attribution link, "Data attribution" popup). */
+        inset: 0 0 32px 0;
         display: grid;
         grid-template-rows: 1fr auto;
         padding: 64px;
-        pointer-events: none;
-      }
-      .hero-content a,
-      .hero-content button {
-        pointer-events: auto;
       }
       .hero-title {
         font-family: var(--display);
