@@ -122,10 +122,30 @@ The watermask raster is a 256×256 RGBA tile: water is opaque black (`#000000`, 
 - `?extensions=octvertexnormals-watermask` — both
 - Shorthands: `?normals=true`, `?watermask=true`
 
+### Point heights JSON
+
+`GET /{tileset}/heights.json?points=lon,lat;lon,lat;...` returns orthometric, geoid, and ellipsoidal heights at up to 256 lon/lat points. Drop in for quick lookups when you don't need a whole tile — e.g. snapping a GPS trace to terrain or computing fly-over altitudes without unpacking quantized-mesh tiles yourself.
+
+```
+curl "https://terrain.reearth.land/heights.json?points=139.7,35.7;-122.4,37.8"
+```
+
+```json
+{
+  "tileset": "mapterhorn-egm08",
+  "results": [
+    { "lon": 139.7, "lat": 35.7, "elevation": 12.3, "geoid": 39.5, "ellipsoid": 51.8 }
+  ]
+}
+```
+
+Points outside DEM coverage return `null` for `elevation` and `ellipsoid`.
+
 ### Catalog and metadata
 
 | Path | Purpose |
 |---|---|
+| `GET /{tileset}/heights.json?points=lon,lat;...` | Point heights JSON (≤ 256 points) |
 | `GET /tilesets` | List of registered tilesets with attribution |
 | `GET /` | Landing page (HTML; Markdown via `Accept: text/markdown`) |
 | `GET /index.md` | This Markdown landing page |

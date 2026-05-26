@@ -30,6 +30,11 @@ import {
   type SampleDataType,
 } from "./cesium.js";
 import { ProtomapsWaterMask, MASK_SIZE, maskToRgba, type TileLocator } from "./water.js";
+import {
+  MAX_POINTS_PER_REQUEST,
+  parsePointsParam,
+  samplePointHeights,
+} from "./sample.js";
 import { resolvePmtilesSource } from "./protomaps.js";
 import type { GeodeticBounds } from "./cesium.js";
 
@@ -132,6 +137,8 @@ const WATERMASK_WITH_TILESET = /^\/([a-z0-9-]+)\/(watermask|watermask-tms)\/(\d+
 const WATERMASK_DEFAULT = /^\/(watermask|watermask-tms)\/(\d+)\/(\d+)\/(\d+)\.(webp|png)$/;
 const WATERMASK_TILEJSON_WITH_TILESET = /^\/([a-z0-9-]+)\/(watermask|watermask-tms)\/tilejson\.json$/;
 const WATERMASK_TILEJSON_DEFAULT = /^\/(watermask|watermask-tms)\/tilejson\.json$/;
+const HEIGHTS_WITH_TILESET = /^\/([a-z0-9-]+)\/heights\.json$/;
+const HEIGHTS_DEFAULT = /^\/heights\.json$/;
 
 type Encoding = "terrarium" | "mapbox";
 type Format = "webp" | "png";
@@ -281,6 +288,20 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
         const tileset = resolveTileset(undefined, env);
         if (!tileset) return notFound("default tileset not configured");
         return await watermaskTilejson(req, tileset, m[1] as WatermaskScheme);
+      }
+
+      // Point-sample heights as JSON.
+      m = HEIGHTS_WITH_TILESET.exec(url.pathname);
+      if (m) {
+        const tileset = resolveTileset(m[1], env);
+        if (!tileset) return notFound(`unknown tileset: ${m[1]}`);
+        return await serveHeights(req, tileset, url.searchParams, env);
+      }
+      m = HEIGHTS_DEFAULT.exec(url.pathname);
+      if (m) {
+        const tileset = resolveTileset(undefined, env);
+        if (!tileset) return notFound("default tileset not configured");
+        return await serveHeights(req, tileset, url.searchParams, env);
       }
 
       // `/debug/*` endpoints are introspection-only and stay disabled in
@@ -649,6 +670,55 @@ async function tilejson(
   });
 }
 
+// Heights for arbitrary input points aren't a long-tail CDN-cache win the
+// way tile bytes are, but a short max-age lets clients de-dupe bursty
+// requests and the strong ETag (body SHA) lets repeat callers get 304s
+// even after max-age expiry as long as upstream DEMs haven't changed.
+const HEIGHTS_CACHE_CONTROL = "public, max-age=300";
+
+async function serveHeights(
+  req: Request,
+  tileset: Tileset,
+  query: URLSearchParams,
+  env: Env,
+): Promise<Response> {
+  const raw = query.get("points");
+  if (raw == null) {
+    return json({ error: "missing ?points= (format: lon,lat;lon,lat;...)" }, { status: 400 });
+  }
+  let points;
+  try {
+    points = parsePointsParam(raw);
+  } catch (err) {
+    return json({ error: String(err instanceof Error ? err.message : err) }, { status: 400 });
+  }
+  if (points.length === 0) {
+    return json({ error: "no points provided" }, { status: 400 });
+  }
+  if (points.length > MAX_POINTS_PER_REQUEST) {
+    return json(
+      { error: `too many points: ${points.length} > ${MAX_POINTS_PER_REQUEST}` },
+      { status: 400 },
+    );
+  }
+  const heights = await samplePointHeights(tileset, points, env);
+  return metadataJson(
+    req,
+    {
+      tileset: tileset.name,
+      version: resolveTilesetVersion(tileset),
+      results: points.map((p, i) => ({
+        lon: p.lon,
+        lat: p.lat,
+        elevation: heights[i]!.elevation,
+        geoid: heights[i]!.geoid,
+        ellipsoid: heights[i]!.ellipsoid,
+      })),
+    },
+    HEIGHTS_CACHE_CONTROL,
+  );
+}
+
 async function watermaskTilejson(
   req: Request,
   tileset: Tileset,
@@ -867,19 +937,23 @@ function json(body: unknown, init?: ResponseInit): Response {
 const METADATA_CACHE_CONTROL = "public, max-age=3600";
 
 /** JSON response with strong ETag + If-None-Match support. */
-async function metadataJson(req: Request, body: unknown): Promise<Response> {
+async function metadataJson(
+  req: Request,
+  body: unknown,
+  cacheControl: string = METADATA_CACHE_CONTROL,
+): Promise<Response> {
   const text = JSON.stringify(body);
   const etag = await bodyEtag(text);
   if (matchesIfNoneMatch(req.headers.get("if-none-match"), etag)) {
     return new Response(null, {
       status: 304,
-      headers: { etag, "cache-control": METADATA_CACHE_CONTROL },
+      headers: { etag, "cache-control": cacheControl },
     });
   }
   return new Response(text, {
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "cache-control": METADATA_CACHE_CONTROL,
+      "cache-control": cacheControl,
       etag,
     },
   });

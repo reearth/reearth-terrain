@@ -143,10 +143,37 @@ based on the `requestVertexNormals` / `requestWaterMask` flags.
 - `?extensions=octvertexnormals-watermask` — both
 - Shorthands: `?normals=true`, `?watermask=true`
 
+### Point heights JSON
+
+`GET /{tileset}/heights.json?points=lon,lat;lon,lat;...` returns the
+orthometric DEM height, EGM2008 geoid undulation, and WGS84 ellipsoidal
+height at each requested point. Up to **256 points per request**.
+
+```
+curl "https://terrain.reearth.land/heights.json?points=139.7,35.7;-122.4,37.8"
+```
+
+```json
+{
+  "tileset": "mapterhorn-egm08",
+  "version": "...",
+  "results": [
+    { "lon": 139.7, "lat": 35.7, "elevation": 12.3, "geoid": 39.5, "ellipsoid": 51.8 },
+    { "lon": -122.4, "lat": 37.8, "elevation": 16.1, "geoid": -32.1, "ellipsoid": -16.0 }
+  ]
+}
+```
+
+Points outside the DEM's coverage return `null` for `elevation` and
+`ellipsoid`; `geoid` is essentially always populated because EGM2008 is
+global. Malformed input or more than 256 points returns HTTP 400 with a
+JSON `{ "error": "..." }` body.
+
 ### Catalog and metadata
 
 | Path | Purpose |
 |---|---|
+| `GET /{tileset}/heights.json?points=lon,lat;...` | Point heights JSON (≤ 256 points) |
 | `GET /tilesets` | List of registered tilesets with attribution |
 | `GET /` | Landing page |
 | `GET /viewer` | Built-in CesiumJS viewer (append `?demo` for chrome-less orbit) |

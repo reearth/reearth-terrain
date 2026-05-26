@@ -23,6 +23,7 @@ Key facts an AI assistant should know before writing code or docs against this s
 - [TileJSON — Terrarium, ellipsoidal](https://terrain.reearth.land/terrarium/ellipsoid/tilejson.json): Same content as Mapbox encoding, Terrarium pixel encoding.
 - [TileJSON — watermask (Web Mercator XYZ)](https://terrain.reearth.land/watermask/tilejson.json): 256×256 RGBA watermask raster, opaque-black water on transparent land, Protomaps-derived. Drop-in MapLibre raster overlay.
 - [TileJSON — watermask (TMS Geographic)](https://terrain.reearth.land/watermask-tms/tilejson.json): Same content in Cesium-compatible TMS coordinates, aligned with `/cesium-mesh` tiles.
+- [Point heights JSON](https://terrain.reearth.land/heights.json?points=139.7,35.7): `GET /{tileset}/heights.json?points=lon,lat;lon,lat;...` — returns orthometric, geoid, and ellipsoidal heights at up to 256 lon/lat points. Points outside DEM coverage get `null`.
 - [Tileset catalog](https://terrain.reearth.land/tilesets): JSON list of registered tilesets with attribution and zoom ranges.
 - [Built-in viewer](https://terrain.reearth.land/viewer): CesiumJS viewer for inspecting tiles in a browser.
 - [Health](https://terrain.reearth.land/health): Liveness probe.
