@@ -872,6 +872,53 @@
 
       <div class="code-grid">
         <div class="code-col">
+          <div class="code-col-eyebrow">Navara · Terrain-RGB</div>
+          <h3 class="code-col-h">Terrain-RGB</h3>
+          <p class="code-col-d">
+            Plug Re:Earth Terrain into
+            <a style="color:inherit;text-decoration:underline;text-underline-offset:3px;" href="https://github.com/reearth/navara">Navara</a>
+            — a WebGL-powered 3D globe renderer. Use
+            <code>MAPBOX_ELEVATION_DECODER</code> for the Mapbox
+            Terrain-RGB pixel encoding.
+          </p>
+          <div class="code-block">
+            <button class="copy-btn" data-copy="navara-mapbox">Copy</button>
+<pre style="margin:0;font-family:inherit"><span class="cm">// Navara — Mapbox Terrain-RGB</span>
+view.addLayer({
+  type: <span class="str">"terrain"</span>,
+  data: { url: <span class="str">"https://terrain.reearth.land/mapbox/elevation/{z}/{x}/{y}.png"</span> },
+  rasterTerrain: {
+    elevationDecoder: MAPBOX_ELEVATION_DECODER(),
+    maxZoom: <span class="kw">15</span>,
+  },
+});</pre>
+          </div>
+        </div>
+
+        <div class="code-col">
+          <div class="code-col-eyebrow">Navara · Terrarium</div>
+          <h3 class="code-col-h">Terrarium</h3>
+          <p class="code-col-d">
+            Same content, Terrarium pixel encoding. Use
+            <code>TERRARIUM_ELEVATION_DECODER</code> when your pipeline
+            already speaks Terrarium (Mapzen, AWS Open Terrain Tiles,
+            &hellip;).
+          </p>
+          <div class="code-block">
+            <button class="copy-btn" data-copy="navara-terrarium">Copy</button>
+<pre style="margin:0;font-family:inherit"><span class="cm">// Navara — Terrarium</span>
+view.addLayer({
+  type: <span class="str">"terrain"</span>,
+  data: { url: <span class="str">"https://terrain.reearth.land/terrarium/elevation/{z}/{x}/{y}.png"</span> },
+  rasterTerrain: {
+    elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
+    maxZoom: <span class="kw">15</span>,
+  },
+});</pre>
+          </div>
+        </div>
+
+        <div class="code-col">
           <div class="code-col-eyebrow">CesiumJS</div>
           <h3 class="code-col-h">quantized-mesh-1.0</h3>
           <p class="code-col-d">
@@ -1339,6 +1386,22 @@ map.setTerrain({ source: "terrain" });`,
   encoding: "terrarium",
 });
 map.setTerrain({ source: "terrain" });`,
+        "navara-mapbox": `view.addLayer({
+  type: "terrain",
+  data: { url: "https://terrain.reearth.land/mapbox/elevation/{z}/{x}/{y}.png" },
+  rasterTerrain: {
+    elevationDecoder: MAPBOX_ELEVATION_DECODER(),
+    maxZoom: 15,
+  },
+});`,
+        "navara-terrarium": `view.addLayer({
+  type: "terrain",
+  data: { url: "https://terrain.reearth.land/terrarium/elevation/{z}/{x}/{y}.png" },
+  rasterTerrain: {
+    elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
+    maxZoom: 15,
+  },
+});`,
       };
       document.querySelectorAll(".copy-btn").forEach((b) => {
         b.addEventListener("click", async () => {
