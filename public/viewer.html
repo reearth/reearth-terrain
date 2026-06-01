@@ -15,6 +15,8 @@
     />
     <script src="https://cdn.jsdelivr.net/npm/cesium@latest/Build/Cesium/Cesium.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="/navara/navara.iife.js"></script>
+    <script src="/viewer-attribution.js"></script>
     <link
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap"
@@ -37,7 +39,8 @@
       html,
       body,
       #cesium,
-      #maplibre {
+      #maplibre,
+      #navara {
         margin: 0;
         padding: 0;
         height: 100%;
@@ -50,7 +53,8 @@
         color: var(--paper);
         -webkit-font-smoothing: antialiased;
       }
-      #maplibre {
+      #maplibre,
+      #navara {
         position: absolute;
         top: 0;
         left: 0;
@@ -385,7 +389,8 @@
         <div class="field">
           <span class="field-label">Engine</span>
           <select id="renderer">
-            <option value="cesium" selected>Cesium</option>
+            <option value="navara" selected>Navara</option>
+            <option value="cesium">Cesium</option>
             <option value="maplibre">MapLibre</option>
           </select>
         </div>
@@ -462,7 +467,8 @@
       </div>
       </div>
     </div>
-    <div id="cesium"></div>
+    <div id="navara"></div>
+    <div id="cesium" class="hidden"></div>
     <div id="maplibre" class="hidden"></div>
     <script>
       // ?nopanel (or ?ui=0) hides the control panel — useful for embeds
@@ -544,18 +550,21 @@
       };
       const basemap = () => BASEMAPS[params().basemap] || BASEMAPS.esri;
 
-      // Last camera target so renderer switches keep the view.
-      let lastView = DEMO
+      const initialViews = DEMO
         ? { lon: 138.7274, lat: 35.36, range: 18000 }
         : PLATEAU
           ? { lon: 139.767, lat: 35.681, range: 3000 } // Tokyo Station, close enough to see LOD1 blocks
           : { lon: 138.7274, lat: 35.36, range: 15000 };
+
+      // Last camera target so renderer switches keep the view.
+      let lastView = initialViews;
 
       let viewer = null;
       let map = null;
 
       function syncUiForRenderer(renderer) {
         const cesiumOnly = renderer === "cesium";
+        const navaraOrMaplibre = renderer === "navara" || renderer === "maplibre";
         document
           .getElementById("cesium-opts")
           .classList.toggle("hidden", !cesiumOnly);
@@ -566,7 +575,14 @@
           .getElementById("opt-watermask")
           .classList.toggle("hidden", !cesiumOnly);
         document.getElementById("lighting-label").textContent =
-          cesiumOnly ? "Sun lighting" : "Hillshade";
+          cesiumOnly
+            ? "Sun lighting"
+            : ["maplibre", "navara"].includes(renderer) 
+              ? "Hillshade"
+              : "Atmosphere";
+        document
+          .getElementById("navara")
+          .classList.toggle("hidden", renderer !== "navara");
         document
           .getElementById("cesium")
           .classList.toggle("hidden", renderer !== "cesium");
@@ -574,6 +590,11 @@
           .getElementById("maplibre")
           .classList.toggle("hidden", renderer !== "maplibre");
       }
+
+      // Navara ThreeView instance, plugin, hillshade layer id, and attribution element
+      let navaraView = null;
+      let navaraHillshadeLayerId = null;
+      let navaraAttribEl = null;
 
       // Post a one-shot message to the parent window when the visible
       // viewport finishes loading its initial tile batch. Useful for
@@ -588,7 +609,9 @@
             new CustomEvent("reearth-terrain:ready", { detail: payload }),
           );
         };
-        if (renderer === "cesium") {
+        if (renderer === "navara") {
+          navaraView.once("idle", send);
+        } else if (renderer === "cesium") {
           let sawPending = false;
           const ev = viewer.scene.globe.tileLoadProgressEvent;
           const off = ev.addEventListener((pending) => {
@@ -611,6 +634,13 @@
       // Demo mode owns the camera, so disable user gestures that would
       // fight the rAF loop.
       function lockCamera() {
+        if (navaraView) {
+          navaraView.camera.options = {
+            enableSpin: false,
+            enableZoom: false,
+            enableTilt: false,
+          };
+        }
         if (viewer) {
           viewer.scene.screenSpaceCameraController.enableInputs = false;
         }
@@ -633,6 +663,18 @@
       let mapSnap = null;
 
       function destroyAll() {
+        if (navaraView) {
+          try { navaraView.dispose(); } catch (_) {}
+          navaraView = null;
+          navaraHillshadeLayerId = null;
+          if (navaraAttribEl) {
+            navaraAttribEl.remove();
+            navaraAttribEl = null;
+          }
+          // Clear the canvas so there's no stale frame when re-initialising.
+          const el = document.getElementById("navara");
+          el.innerHTML = "";
+        }
         if (viewer && !viewer.isDestroyed()) {
           cesiumSnap = {
             destination: viewer.camera.position.clone(),
@@ -729,11 +771,112 @@
         notifyOnTilesLoaded("maplibre");
       }
 
+      async function buildNavara() {
+        if (typeof Navara === "undefined") {
+          console.error("Navara IIFE not loaded — check /navara/navara.iife.js");
+          return;
+        }
+        const { lighting } = params();
+        const {
+          default: ThreeView,
+          DefaultPlugin,
+          Color,
+          TERRARIUM_ELEVATION_DECODER,
+        } = Navara;
+
+        const container = document.getElementById("navara");
+        navaraView = new ThreeView({ container });
+        window.navaraView = navaraView;
+
+        const plugin = new DefaultPlugin();
+        navaraView.addPlugin(plugin);
+        await navaraView.init();
+
+        const effects = plugin.addDefaultPhotorealScene();
+
+        if(params().basemap === "osm") {
+          effects.toneMapping.update({ toneMapping: {
+            mode: Navara.ToneMappingMode.NEUTRAL
+          } })
+          navaraView.toneMappingExposure = 3;
+        } else {
+          navaraView.toneMappingExposure = 10;
+        }
+
+        navaraView.atmosphere.date.setHours(8);
+
+        const terrainUrl = `${location.origin}/terrarium/elevation/{z}/{x}/{y}.png`;
+
+        // Terrain — Re:Earth Terrain terrarium endpoint
+        navaraView.addLayer({
+          type: "terrain",
+          data: { url: terrainUrl },
+          rasterTerrain: {
+            maxZoom: 15,
+            minZoom: 5,
+            elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
+            tileSize: 512,
+          },
+        });
+
+        // Imagery — use the currently selected basemap
+        const b = basemap();
+        navaraView.addLayer({
+          type: "tiles",
+          data: { url: b.url },
+          rasterTile: {
+            color: new Color().setStyle("#ffffff"),
+            maxZoom: b.maxzoom,
+            opacity: 1,
+          },
+        });
+
+        // Hillshade — separate tiles layer over the terrain DEM
+        const hs = navaraView.addLayer({
+          type: "tiles",
+          data: { url: terrainUrl },
+          rasterTile: { maxZoom: 15, minZoom: 5 },
+          hillshade: {
+            elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
+            exaggeration: lighting ? 1 : 0
+          },
+        });
+        navaraHillshadeLayerId = hs?.id ?? null;
+
+        // Fly to initial location
+        navaraView.setCamera({
+          lng: lastView.lon,
+          lat: lastView.lat,
+          height: 0,
+          heading: 0,
+          pitch: -40,
+          distance: lastView.range * 0.7,
+        });
+
+        navaraView.atmosphere.setElevationAt(
+          { lng: initialViews.lon, lat: initialViews.lat },
+          { lng: lastView.lon, lat: lastView.lat },
+        );
+
+        navaraAttribEl = buildNavaraAttribution([
+          '<a href="https://mapterhorn.com">Mapterhorn</a>',
+          '<a href="https://earth-info.nga.mil/">EGM2008 (NGA)</a>',
+          basemap().attributionHtml
+        ]);
+        document.getElementById("navara").appendChild(navaraAttribEl);
+      }
+
       async function build() {
         destroyAll();
         const { renderer, normals, watermask, lighting, dt } = params();
         syncUiForRenderer(renderer);
         try {
+          if (renderer === "navara") {
+            await buildNavara();
+            if (DEMO) lockCamera();
+            notifyOnTilesLoaded("navara");
+            return;
+          }
           if (renderer === "maplibre") {
             await buildMapLibre();
             return;
@@ -874,6 +1017,19 @@
 
       function flyTo(lon, lat, range, animate = true) {
         lastView = { lon, lat, range };
+        if (navaraView) {
+          navaraView.atmosphere.setElevationFromCameraAt({ lng: lastView.lon, lat: lastView.lat });
+          navaraView.flyTo({
+            lng: lastView.lon,
+            lat: lastView.lat,
+            height: 0,
+            heading: 0,
+            pitch: -40,
+            distance: range * 0.7,
+          },
+          animate ? 1500 : 0,
+        );
+        }
         if (viewer) {
           alignSunToLongitude(lon);
           viewer.camera.flyToBoundingSphere(
@@ -906,12 +1062,23 @@
       // Lighting/hillshade is a scene flag in both renderers — no rebuild
       // needed when toggled.
       document.getElementById("lighting").addEventListener("change", (e) => {
-        if (viewer) viewer.scene.globe.enableLighting = e.target.checked;
+        const on = e.target.checked;
+        if (navaraView) {
+          const { TERRARIUM_ELEVATION_DECODER } = Navara;
+          navaraView.updateLayerById(navaraHillshadeLayerId, {
+            rasterTile: { },
+            hillshade: {
+              elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
+              exaggeration: on ? 1 : 0,
+            },
+          });
+        }
+        if (viewer) viewer.scene.globe.enableLighting = on;
         if (map && map.getLayer("hillshade")) {
           map.setLayoutProperty(
             "hillshade",
             "visibility",
-            e.target.checked ? "visible" : "none",
+            on ? "visible" : "none",
           );
         }
       });
@@ -970,6 +1137,9 @@
             return;
           }
           const headingDeg = (((now - start) % periodMs) / periodMs) * 360;
+          if (navaraView) {
+            navaraView.rotateAround(-0.002);
+          }
           if (viewer && !viewer.isDestroyed()) {
             viewer.camera.lookAt(
               Cesium.Cartesian3.fromDegrees(center.lon, center.lat, 0),
