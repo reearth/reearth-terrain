@@ -1,0 +1,25 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: reearth-terrain
+  namespace: reearth
+  description: Open terrain tiles for 3D globes
+  annotations:
+    github.com/project-slug: reearth/reearth-terrain
+  links:
+  - url: https://github.com/reearth/reearth-terrain
+    title: GitHub
+    icon: github
+  - url: https://terrain.reearth.land
+    title: Website
+    icon: web
+  tags:
+  - typescript
+  - 3d
+  - geoid
+  - gis
+  - terrain
+spec:
+  type: service
+  lifecycle: production
+  owner: reearth/cto-office
