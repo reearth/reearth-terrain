@@ -16,7 +16,6 @@
     <script src="https://cdn.jsdelivr.net/npm/cesium@latest/Build/Cesium/Cesium.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
     <script src="/navara/navara.iife.js"></script>
-    <script src="/viewer-attribution.js"></script>
     <link
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap"
@@ -315,6 +314,10 @@
         inset: 2px;
         background: var(--ink);
       }
+      label.check:has(input:disabled) {
+        opacity: 0.4;
+        pointer-events: none;
+      }
 
       /* location plaques */
       .locations {
@@ -404,7 +407,7 @@
       </div>
 
       <div class="section" id="cesium-opts">
-        <div class="section-label"><span>Terrain (Cesium)</span></div>
+        <div class="section-label"><span>Terrain</span></div>
         <div class="field" id="row-datatype">
           <span class="field-label">Datum</span>
           <select id="datatype">
@@ -428,7 +431,7 @@
           ></label
         >
         <label class="check"
-          ><input type="checkbox" id="lighting" checked /><span
+          ><input type="checkbox" id="lighting" /><span
             id="lighting-label"
             >Sun lighting</span
           ></label
@@ -567,16 +570,18 @@
 
       function syncUiForRenderer(renderer) {
         const cesiumOnly = renderer === "cesium";
-        const navaraOrMaplibre = renderer === "navara" || renderer === "maplibre";
+        // Cesium and Navara both stream the quantized-mesh endpoint, so
+        // the datum / normals / water-mask options apply to either.
+        const quantizedMesh = renderer === "cesium" || renderer === "navara";
         document
           .getElementById("cesium-opts")
-          .classList.toggle("hidden", !cesiumOnly);
+          .classList.toggle("hidden", !quantizedMesh);
         document
           .getElementById("opt-normals")
-          .classList.toggle("hidden", !cesiumOnly);
+          .classList.toggle("hidden", !quantizedMesh);
         document
           .getElementById("opt-watermask")
-          .classList.toggle("hidden", !cesiumOnly);
+          .classList.toggle("hidden", !quantizedMesh);
         document.getElementById("lighting-label").textContent =
           cesiumOnly
             ? "Sun lighting"
@@ -592,12 +597,28 @@
         document
           .getElementById("maplibre")
           .classList.toggle("hidden", renderer !== "maplibre");
+        syncQmOptsDisabled();
       }
 
-      // Navara ThreeView instance, plugin, hillshade layer id, and attribution element
+      // Vertex normals / water mask are quantized-mesh extensions. With
+      // hillshade on, Navara renders the raster-dem terrain instead, so
+      // they have no effect — gray them out. (Datum stays enabled: the
+      // raster-dem endpoint honors it too.)
+      function syncQmOptsDisabled() {
+        const { renderer, lighting } = params();
+        const disabled = renderer === "navara" && lighting;
+        document.getElementById("normals").disabled = disabled;
+        document.getElementById("watermask").disabled = disabled;
+      }
+
+      // Navara ThreeView instance, terrain/hillshade layer and source
+      // handles, and attribution plugin
       let navaraView = null;
-      let navaraHillshadeLayerId = null;
-      let navaraAttribEl = null;
+      let navaraTerrainLayer = null;
+      let navaraHillshadeLayer = null;
+      let navaraQmSource = null;
+      let navaraDemSource = null;
+      let navaraAttribution = null;
 
       // Post a one-shot message to the parent window when the visible
       // viewport finishes loading its initial tile batch. Useful for
@@ -667,13 +688,17 @@
 
       function destroyAll() {
         if (navaraView) {
+          // ThreeView.dispose() doesn't dispose plugins, and the
+          // attribution plugin mounts its DOM on document.body — tear
+          // it down explicitly.
+          try { navaraAttribution?.dispose(); } catch (_) {}
+          navaraAttribution = null;
           try { navaraView.dispose(); } catch (_) {}
           navaraView = null;
-          navaraHillshadeLayerId = null;
-          if (navaraAttribEl) {
-            navaraAttribEl.remove();
-            navaraAttribEl = null;
-          }
+          navaraTerrainLayer = null;
+          navaraHillshadeLayer = null;
+          navaraQmSource = null;
+          navaraDemSource = null;
           // Clear the canvas so there's no stale frame when re-initialising.
           const el = document.getElementById("navara");
           el.innerHTML = "";
@@ -728,7 +753,7 @@
             },
             dem: {
               type: "raster-dem",
-              url: `${location.origin}/terrarium/elevation/tilejson.json`,
+              url: `${"https://terrain.reearth.land"}/terrarium/elevation/tilejson.json`,
               encoding: "terrarium",
               // The TileJSON also advertises this, but MapLibre's
               // raster-dem source doesn't reliably surface it through
@@ -779,10 +804,11 @@
           console.error("Navara IIFE not loaded — check /navara/navara.iife.js");
           return;
         }
-        const { lighting } = params();
+        const { lighting, normals, watermask, dt } = params();
         const {
           default: ThreeView,
           DefaultPlugin,
+          AttributionPlugin,
           Color,
           TERRARIUM_ELEVATION_DECODER,
         } = Navara;
@@ -793,6 +819,8 @@
 
         const plugin = new DefaultPlugin();
         navaraView.addPlugin(plugin);
+        navaraAttribution = new AttributionPlugin();
+        navaraView.addPlugin(navaraAttribution);
         await navaraView.init();
 
         const effects = plugin.addDefaultPhotorealScene();
@@ -808,43 +836,57 @@
 
         navaraView.atmosphere.date.setHours(8);
 
-        const terrainUrl = `${location.origin}/terrarium/elevation/{z}/{x}/{y}.png`;
-
-        // Terrain — Re:Earth Terrain terrarium endpoint
-        navaraView.addLayer({
+        // Both terrain sources stay registered for the view's lifetime,
+        // and both honor the Datum option. Quantized-mesh is the default
+        // terrain (same tiles the Cesium renderer streams, additionally
+        // honoring normals / water-mask); hillshade can't drape over
+        // quantized-mesh terrain, so the hillshade toggle re-points the
+        // terrain layer at the terrarium raster-dem instead.
+        navaraQmSource = navaraView.addSource({
+          type: "quantized-mesh",
+          url: `${"https://terrain.reearth.land"}/cesium-mesh/${dt}/{z}/{x}/{y}.terrain`,
+          maxZoom: 18,
+          requestVertexNormals: normals,
+          requestWaterMask: watermask,
+        });
+        navaraDemSource = navaraView.addSource({
+          type: "raster-dem",
+          url: `${"https://terrain.reearth.land"}/terrarium/${dt}/{z}/{x}/{y}.png`,
+          maxZoom: 15,
+          minZoom: 5,
+          tileSize: 512,
+          elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
+        });
+        navaraTerrainLayer = navaraView.addLayer({
           type: "terrain",
-          data: { url: terrainUrl },
-          rasterTerrain: {
-            maxZoom: 15,
-            minZoom: 5,
-            elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
-            tileSize: 512,
-          },
+          source: lighting ? navaraDemSource : navaraQmSource,
         });
 
         // Imagery — use the currently selected basemap
         const b = basemap();
+        const imagerySource = navaraView.addSource({
+          type: "raster-tile",
+          url: b.url,
+          maxZoom: b.maxzoom,
+        });
         navaraView.addLayer({
-          type: "tiles",
-          data: { url: b.url },
-          rasterTile: {
+          type: "raster",
+          source: imagerySource,
+          raster: {
             color: new Color().setStyle("#ffffff"),
-            maxZoom: b.maxzoom,
             opacity: 1,
           },
         });
 
-        // Hillshade — separate tiles layer over the terrain DEM
-        const hs = navaraView.addLayer({
-          type: "tiles",
-          data: { url: terrainUrl },
-          rasterTile: { maxZoom: 15, minZoom: 5 },
-          hillshade: {
-            elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
-            exaggeration: lighting ? 1 : 0
-          },
-        });
-        navaraHillshadeLayerId = hs?.id ?? null;
+        // Hillshade — a separate raster layer over the DEM, present only
+        // in raster-dem terrain mode
+        navaraHillshadeLayer = lighting
+          ? navaraView.addLayer({
+              type: "raster",
+              source: navaraDemSource,
+              hillshade: { exaggeration: 1 },
+            })
+          : null;
 
         // Fly to initial location — demo uses the tuned orbit framing.
         navaraView.setCamera(
@@ -865,13 +907,36 @@
           { lng: lastView.lon, lat: lastView.lat },
         );
 
-        navaraAttribEl = buildNavaraAttribution([
-          '<a href="https://terrain.reearth.land">Re:Earth Terrain</a>',
-          '<a href="https://mapterhorn.com">Mapterhorn</a>',
-          '<a href="https://earth-info.nga.mil/">EGM2008 (NGA)</a>',
-          basemap().attributionHtml
+        navaraAttribution.show([
+          {
+            attribution: "Re:Earth Terrain",
+            attributionUrl: "https://terrain.reearth.land",
+          },
+          { attribution: "Mapterhorn", attributionUrl: "https://mapterhorn.com" },
+          {
+            attribution: "EGM2008 (NGA)",
+            attributionUrl: "https://earth-info.nga.mil/",
+          },
+          { attributionHtml: basemap().attributionHtml },
         ]);
-        document.getElementById("navara").appendChild(navaraAttribEl);
+      }
+
+      // Re-point both Navara terrain sources at the current Datum /
+      // normals / water-mask selection. Source updates are partial and
+      // reload every referencing layer in place, so no ThreeView
+      // dispose/recreate is needed.
+      function updateNavaraTerrainSources() {
+        const { normals, watermask, dt } = params();
+        navaraQmSource?.update({
+          type: "quantized-mesh",
+          url: `${"https://terrain.reearth.land"}/cesium-mesh/${dt}/{z}/{x}/{y}.terrain`,
+          requestVertexNormals: normals,
+          requestWaterMask: watermask,
+        });
+        navaraDemSource?.update({
+          type: "raster-dem",
+          url: `${"https://terrain.reearth.land"}/terrarium/${dt}/{z}/{x}/{y}.png`,
+        });
       }
 
       async function build() {
@@ -890,7 +955,7 @@
             return;
           }
           const terrain = await Cesium.CesiumTerrainProvider.fromUrl(
-            `${location.origin}/cesium-mesh/${dt}`,
+            `${"https://terrain.reearth.land"}/cesium-mesh/${dt}`,
             {
               requestVertexNormals: normals,
               requestWaterMask: watermask,
@@ -1071,16 +1136,26 @@
       // needed when toggled.
       document.getElementById("lighting").addEventListener("change", (e) => {
         const on = e.target.checked;
-        if (navaraView) {
-          const { TERRARIUM_ELEVATION_DECODER } = Navara;
-          navaraView.updateLayerById(navaraHillshadeLayerId, {
-            rasterTile: { },
-            hillshade: {
-              elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
-              exaggeration: on ? 1 : 0,
-            },
+        if (navaraView && navaraTerrainLayer) {
+          // Hillshade can't drape over quantized-mesh terrain, so the
+          // toggle re-points the terrain layer at the matching source
+          // and adds/removes the hillshade layer — no rebuild.
+          navaraTerrainLayer.update({
+            type: "terrain",
+            source: on ? navaraDemSource : navaraQmSource,
           });
+          if (on && !navaraHillshadeLayer) {
+            navaraHillshadeLayer = navaraView.addLayer({
+              type: "raster",
+              source: navaraDemSource,
+              hillshade: { exaggeration: 1 },
+            });
+          } else if (!on && navaraHillshadeLayer) {
+            navaraHillshadeLayer.delete();
+            navaraHillshadeLayer = null;
+          }
         }
+        syncQmOptsDisabled();
         if (viewer) viewer.scene.globe.enableLighting = on;
         if (map && map.getLayer("hillshade")) {
           map.setLayoutProperty(
@@ -1090,11 +1165,21 @@
           );
         }
       });
+      // Terrain parameters update the registered Navara sources in
+      // place instead of disposing/recreating the ThreeView; every
+      // other control (renderer, basemap) still rebuilds.
+      const TERRAIN_PARAM_IDS = ["datatype", "normals", "watermask"];
       document
         .querySelectorAll("#ui input, #ui select")
         .forEach((el) => {
           if (el.id === "lighting") return;
-          el.addEventListener("change", build);
+          el.addEventListener("change", () => {
+            if (navaraView && TERRAIN_PARAM_IDS.includes(el.id)) {
+              updateNavaraTerrainSources();
+              return;
+            }
+            build();
+          });
         });
       document
         .querySelectorAll("#ui button[data-loc]")

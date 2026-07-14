@@ -872,27 +872,27 @@
 
       <div class="code-grid">
         <div class="code-col">
-          <div class="code-col-eyebrow">Navara · Terrain-RGB</div>
-          <h3 class="code-col-h">Terrain-RGB</h3>
+          <div class="code-col-eyebrow">Navara · quantized-mesh</div>
+          <h3 class="code-col-h">quantized-mesh-1.0</h3>
           <p class="code-col-d">
             Plug Re:Earth Terrain into
             <a style="color:inherit;text-decoration:underline;text-underline-offset:3px;" href="https://github.com/reearth/navara">Navara</a>
-            — a WebGL-powered 3D globe renderer. Use
-            <code>MAPBOX_ELEVATION_DECODER</code> for the Mapbox
-            Terrain-RGB pixel encoding.
+            — a WebGL-powered 3D globe renderer. Register the
+            quantized-mesh endpoint as a source and point a terrain
+            layer at it.
           </p>
           <div class="code-block">
-            <button class="copy-btn" data-copy="navara-mapbox">Copy</button>
-<pre style="margin:0;font-family:inherit"><span class="cm">// Navara — Mapbox Terrain-RGB</span>
-view.addLayer({
-  type: <span class="str">"terrain"</span>,
-  data: { url: <span class="str">"https://terrain.reearth.land/mapbox/elevation/{z}/{x}/{y}.png"</span> },
-  rasterTerrain: {
-    elevationDecoder: MAPBOX_ELEVATION_DECODER(),
-    maxZoom: <span class="kw">15</span>,
-  },
+            <button class="copy-btn" data-copy="navara-quantized-mesh">Copy</button>
+<pre style="margin:0;font-family:inherit"><span class="cm">// Navara — quantized-mesh-1.0</span>
+<span class="kw">const</span> terrain = view.addSource({
+  type: <span class="str">"quantized-mesh"</span>,
+  url: <span class="str">"https://terrain.reearth.land/cesium-mesh/ellipsoid/{z}/{x}/{y}.terrain"</span>,
+  maxZoom: <span class="kw">18</span>,
+  requestVertexNormals: <span class="kw">true</span>,
+  requestWaterMask: <span class="kw">true</span>,
 });
-<span class="cm">// Navara has no attribution UI — display these credits yourself:</span>
+view.addLayer({ type: <span class="str">"terrain"</span>, source: terrain });
+<span class="cm">// Show these credits via Navara's AttributionPlugin (or your own UI):</span>
 <span class="cm">// Re:Earth Terrain · Mapterhorn (CC BY 4.0)</span>
 <span class="cm">// + Protomaps · © OpenStreetMap contributors (ODbL) if the water mask is on</span></pre>
           </div>
@@ -902,7 +902,7 @@ view.addLayer({
           <div class="code-col-eyebrow">Navara · Terrarium</div>
           <h3 class="code-col-h">Terrarium</h3>
           <p class="code-col-d">
-            Same content, Terrarium pixel encoding. Use
+            Same content as a raster-dem source. Use
             <code>TERRARIUM_ELEVATION_DECODER</code> when your pipeline
             already speaks Terrarium (Mapzen, AWS Open Terrain Tiles,
             &hellip;).
@@ -910,15 +910,14 @@ view.addLayer({
           <div class="code-block">
             <button class="copy-btn" data-copy="navara-terrarium">Copy</button>
 <pre style="margin:0;font-family:inherit"><span class="cm">// Navara — Terrarium</span>
-view.addLayer({
-  type: <span class="str">"terrain"</span>,
-  data: { url: <span class="str">"https://terrain.reearth.land/terrarium/elevation/{z}/{x}/{y}.png"</span> },
-  rasterTerrain: {
-    elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
-    maxZoom: <span class="kw">15</span>,
-  },
+<span class="kw">const</span> terrain = view.addSource({
+  type: <span class="str">"raster-dem"</span>,
+  url: <span class="str">"https://terrain.reearth.land/terrarium/elevation/{z}/{x}/{y}.png"</span>,
+  elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
+  maxZoom: <span class="kw">15</span>,
 });
-<span class="cm">// Navara has no attribution UI — display these credits yourself:</span>
+view.addLayer({ type: <span class="str">"terrain"</span>, source: terrain });
+<span class="cm">// Show these credits via Navara's AttributionPlugin (or your own UI):</span>
 <span class="cm">// Re:Earth Terrain · Mapterhorn (CC BY 4.0)</span>
 <span class="cm">// + Protomaps · © OpenStreetMap contributors (ODbL) if the water mask is on</span></pre>
           </div>
@@ -1418,26 +1417,25 @@ map.setTerrain({ source: "terrain" });`,
   encoding: "terrarium",
 });
 map.setTerrain({ source: "terrain" });`,
-        "navara-mapbox": `view.addLayer({
-  type: "terrain",
-  data: { url: "https://terrain.reearth.land/mapbox/elevation/{z}/{x}/{y}.png" },
-  rasterTerrain: {
-    elevationDecoder: MAPBOX_ELEVATION_DECODER(),
-    maxZoom: 15,
-  },
+        "navara-quantized-mesh": `const terrain = view.addSource({
+  type: "quantized-mesh",
+  url: "https://terrain.reearth.land/cesium-mesh/ellipsoid/{z}/{x}/{y}.terrain",
+  maxZoom: 18,
+  requestVertexNormals: true,
+  requestWaterMask: true,
 });
-// Navara has no attribution UI — display these credits yourself:
+view.addLayer({ type: "terrain", source: terrain });
+// Show these credits via Navara's AttributionPlugin (or your own UI):
 // Re:Earth Terrain · Mapterhorn (CC BY 4.0)
 // + Protomaps · © OpenStreetMap contributors (ODbL) if the water mask is on`,
-        "navara-terrarium": `view.addLayer({
-  type: "terrain",
-  data: { url: "https://terrain.reearth.land/terrarium/elevation/{z}/{x}/{y}.png" },
-  rasterTerrain: {
-    elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
-    maxZoom: 15,
-  },
+        "navara-terrarium": `const terrain = view.addSource({
+  type: "raster-dem",
+  url: "https://terrain.reearth.land/terrarium/elevation/{z}/{x}/{y}.png",
+  elevationDecoder: TERRARIUM_ELEVATION_DECODER(),
+  maxZoom: 15,
 });
-// Navara has no attribution UI — display these credits yourself:
+view.addLayer({ type: "terrain", source: terrain });
+// Show these credits via Navara's AttributionPlugin (or your own UI):
 // Re:Earth Terrain · Mapterhorn (CC BY 4.0)
 // + Protomaps · © OpenStreetMap contributors (ODbL) if the water mask is on`,
         deckgl: `new TerrainLayer({
