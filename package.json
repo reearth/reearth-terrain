@@ -18,6 +18,8 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.5",
+    "@emnapi/core": "2.0.0-alpha.3",
+    "@emnapi/runtime": "^1.11.3",
     "@navaramap/three": "^0.0.4",
     "@navaramap/three-default-plugin": "^0.0.4",
     "@types/mapbox__vector-tile": "^1.3.4",
