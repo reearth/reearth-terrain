@@ -977,7 +977,6 @@ map.setTerrain({ source: <span class="str">"terrain"</span> });</pre>
 map.addSource(<span class="str">"terrain"</span>, {
   type: <span class="str">"raster-dem"</span>,
   url:  <span class="str">"https://terrain.reearth.land/terrarium/ellipsoid/tilejson.json"</span>,
-  encoding: <span class="str">"terrarium"</span>,
 });
 map.setTerrain({ source: <span class="str">"terrain"</span> });</pre>
           </div>
@@ -1414,7 +1413,6 @@ map.setTerrain({ source: "terrain" });`,
         "maplibre-terrarium": `map.addSource("terrain", {
   type: "raster-dem",
   url:  "https://terrain.reearth.land/terrarium/ellipsoid/tilejson.json",
-  encoding: "terrarium",
 });
 map.setTerrain({ source: "terrain" });`,
         "navara-quantized-mesh": `const terrain = view.addSource({

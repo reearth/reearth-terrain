@@ -71,10 +71,9 @@ map.setTerrain({ source: "terrain" });
 // add a `hillshade` layer if you want visible shaded relief
 ```
 
-Swap `mapbox` for `terrarium` and add `encoding: "terrarium"` to the
-source if your toolchain prefers Terrarium-encoded pixels. The TileJSON
-endpoint advertises the tile template and zoom range, so one URL is
-enough.
+Swap `mapbox` for `terrarium` if your toolchain prefers
+Terrarium-encoded pixels. The TileJSON endpoint advertises the tile
+template, zoom range, and pixel encoding, so one URL is enough.
 
 ## Endpoints
 

@@ -42,7 +42,6 @@ Same content, different pixel encoding. Use this when your toolchain already spe
 map.addSource("terrain", {
   type: "raster-dem",
   url:  "https://terrain.reearth.land/terrarium/ellipsoid/tilejson.json",
-  encoding: "terrarium",
 });
 map.setTerrain({ source: "terrain" });
 ```

@@ -666,6 +666,9 @@ async function tilejson(
     version: resolveTilesetVersion(tileset),
     scheme: "xyz",
     tiles: [`${base.toString()}/{z}/{x}/{y}.webp`],
+    // Non-standard TileJSON key, but MapLibre's raster-dem source picks it
+    // up so clients don't have to specify the DEM encoding themselves.
+    encoding,
     attribution: tileset.attribution
       .map((a) => (a.url ? `<a href="${a.url}">${a.name}</a>` : a.name))
       .join(", "),
