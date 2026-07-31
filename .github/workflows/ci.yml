@@ -54,6 +54,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The committed package-lock.json is written by npm 11 (local dev).
+      # Node 22 bundles npm 10, which rejects it (npm 10 can't resolve
+      # platform-optional transitive deps like @emnapi/* from an npm 11
+      # lock) — align CI's npm with the lock's writer.
+      - run: npm install -g npm@11
+
       - run: npm ci
 
       - name: Build WASM
@@ -155,6 +161,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      # The committed package-lock.json is written by npm 11 (local dev).
+      # Node 22 bundles npm 10, which rejects it (npm 10 can't resolve
+      # platform-optional transitive deps like @emnapi/* from an npm 11
+      # lock) — align CI's npm with the lock's writer.
+      - run: npm install -g npm@11
 
       - run: npm ci
 
