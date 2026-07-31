@@ -808,17 +808,7 @@
       async function buildNavara() {
         const { lighting, normals, watermask, dt } = params();
         const container = document.getElementById("navara");
-        // @navaramap/three 0.0.4 resolves atmosphere textures via a
-        // directory URL that bundlers can't emit, so point it at the
-        // published package. Drop once a release ships per-file asset URLs
-        // (already on navara main), which Vite bundles automatically.
-        navaraView = new ThreeView({
-          container,
-          atmosphere: {
-            atmosphereAssetsUrl:
-              "https://unpkg.com/@navaramap/three@0.0.4/dist/assets/atmosphere",
-          },
-        });
+        navaraView = new ThreeView({ container });
         window.navaraView = navaraView;
 
         const plugin = new DefaultPlugin();
