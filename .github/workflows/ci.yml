@@ -59,6 +59,11 @@ jobs:
       - name: Build WASM
         run: npm run build:wasm
 
+      # The /viewer page is a Vite app (viewer/) built into public/viewer,
+      # which wrangler ships as a static asset.
+      - name: Build viewer
+        run: npm run build:viewer
+
       - name: TypeScript typecheck
         run: npm run typecheck
 
@@ -155,6 +160,9 @@ jobs:
 
       - name: Build WASM
         run: npm run build:wasm
+
+      - name: Build viewer
+        run: npm run build:viewer
 
       # wrangler.toml pins account_id and the R2 bucket name, so the only
       # thing CI needs to supply is the API token. No config rewriting.

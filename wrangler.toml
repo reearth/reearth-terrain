@@ -25,7 +25,8 @@ fallthrough = false
 # `public/`. Requests are matched against assets first; anything that
 # doesn't resolve to a file falls through to the worker for tile
 # generation. `auto-trailing-slash` makes `/viewer` resolve to
-# `public/viewer.html`, and `/` resolves to `public/index.html`.
+# `public/viewer/index.html` (built from `viewer/` by `npm run
+# build:viewer`), and `/` resolves to `public/index.html`.
 [assets]
 directory = "./public"
 html_handling = "auto-trailing-slash"

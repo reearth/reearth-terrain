@@ -12,3 +12,4 @@ tmp/
 !.env.example
 *.log
 .dev.vars
+public/viewer/

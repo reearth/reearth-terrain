@@ -15,7 +15,6 @@
     />
     <script src="https://cdn.jsdelivr.net/npm/cesium@latest/Build/Cesium/Cesium.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-    <script src="/navara/navara.iife.js"></script>
     <link
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap"
@@ -472,7 +471,14 @@
     <div id="navara"></div>
     <div id="cesium" class="hidden"></div>
     <div id="maplibre" class="hidden"></div>
-    <script>
+    <script type="module">
+      import ThreeView, {
+        AttributionPlugin,
+        Color,
+        TERRARIUM_ELEVATION_DECODER,
+      } from "@navaramap/three";
+      import { DefaultPlugin } from "@navaramap/three-default-plugin";
+      import { ToneMappingMode } from "postprocessing";
       // ?nopanel (or ?ui=0) hides the control panel — useful for embeds
       // and screenshots. ?demo orbits Mt Fuji indefinitely.
       // ?plateau loads PLATEAU LOD1 building 3D Tiles on the Cesium
@@ -800,21 +806,19 @@
       }
 
       async function buildNavara() {
-        if (typeof Navara === "undefined") {
-          console.error("Navara IIFE not loaded — check /navara/navara.iife.js");
-          return;
-        }
         const { lighting, normals, watermask, dt } = params();
-        const {
-          default: ThreeView,
-          DefaultPlugin,
-          AttributionPlugin,
-          Color,
-          TERRARIUM_ELEVATION_DECODER,
-        } = Navara;
-
         const container = document.getElementById("navara");
-        navaraView = new ThreeView({ container });
+        // @navaramap/three 0.0.4 resolves atmosphere textures via a
+        // directory URL that bundlers can't emit, so point it at the
+        // published package. Drop once a release ships per-file asset URLs
+        // (already on navara main), which Vite bundles automatically.
+        navaraView = new ThreeView({
+          container,
+          atmosphere: {
+            atmosphereAssetsUrl:
+              "https://unpkg.com/@navaramap/three@0.0.4/dist/assets/atmosphere",
+          },
+        });
         window.navaraView = navaraView;
 
         const plugin = new DefaultPlugin();
@@ -827,14 +831,18 @@
 
         if(params().basemap === "osm") {
           effects.toneMapping.update({ toneMapping: {
-            mode: Navara.ToneMappingMode.NEUTRAL
+            mode: ToneMappingMode.NEUTRAL
           } })
           navaraView.toneMappingExposure = 3;
         } else {
           navaraView.toneMappingExposure = 10;
         }
 
-        navaraView.atmosphere.date.setHours(8);
+        // Reassign so the setter fires — mutating the getter's Date in place
+        // wouldn't recalculate sun/moon directions.
+        const atmosphereDate = new Date(navaraView.atmosphere.date);
+        atmosphereDate.setHours(8);
+        navaraView.atmosphere.date = atmosphereDate;
 
         // Both terrain sources stay registered for the view's lifetime,
         // and both honor the Datum option. Quantized-mesh is the default
@@ -907,7 +915,7 @@
           { lng: lastView.lon, lat: lastView.lat },
         );
 
-        navaraAttribution.show([
+        navaraAttribution.add([
           {
             attribution: "Re:Earth Terrain",
             attributionUrl: "https://terrain.reearth.land",
