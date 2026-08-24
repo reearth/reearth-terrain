@@ -109,6 +109,14 @@ export async function cachedTile(
   const r2Key = buildR2Key(params);
   const cache = caches.default;
 
+  // Timed from here rather than from around generate(), because a Worker's
+  // clock only advances after I/O — a Spectre mitigation — so a stopwatch
+  // either side of a generator reads whatever its last fetch left behind, and
+  // a generator that is pure CPU reads zero. What this spans is a cold
+  // request end to end, which is also the number worth having: it is what
+  // somebody waited.
+  const startedAt = Date.now();
+
   const record = (
     cacheStatus: "hit" | "miss",
     genMs: number,
@@ -164,9 +172,7 @@ export async function cachedTile(
 
   // L3: generate.
   logCache("gen", "miss", params);
-  const startedAt = Date.now();
   const { bytes, contentType, contentEncoding } = await generate();
-  record("miss", Date.now() - startedAt, bytes.byteLength);
   const resp = buildResponse(bytes, contentType, "MISS", etag, params, contentEncoding);
   const writes: Promise<unknown>[] = [
     cache.put(cacheKey, buildL1Internal(bytes, contentType, params, contentEncoding)),
@@ -176,7 +182,14 @@ export async function cachedTile(
     if (contentEncoding) httpMetadata.contentEncoding = contentEncoding;
     writes.push(bucket.put(r2Key, bytes, { httpMetadata }));
   }
-  ctx.waitUntil(Promise.all(writes));
+  ctx.waitUntil(
+    // Recorded after the writes, because they are the I/O that lets the clock
+    // catch up with the generator. Reading it before would be reading the
+    // time as of whatever generating last fetched.
+    Promise.all(writes).finally(() =>
+      record("miss", Date.now() - startedAt, bytes.byteLength),
+    ),
+  );
   return resp;
 }
 
