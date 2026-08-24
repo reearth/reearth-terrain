@@ -20,6 +20,7 @@ import {
   type Tileset,
 } from "./tilesets.js";
 import { cachedTile, bodyEtag, matchesIfNoneMatch } from "./cache.js";
+import { demandFor } from "./okibi.js";
 import { meshCacheVersion } from "./cache-patches.js";
 import { runCleanup } from "./cleanup.js";
 import {
@@ -389,6 +390,14 @@ async function serveTile(
       y,
       format,
       freshness: demFreshness(tileset, dataType, z, x, y),
+      demand: demandFor(env, {
+        tileset: tileset.name,
+        id: `${encoding}/${dataType}/${z}/${x}/${y}.${format}`,
+        // Raster DEM encodings are XYZ, which is Web Mercator.
+        grid: "web-mercator",
+        // The version prefix buildR2Key namespaces by, as it spells it.
+        epoch: { algo: resolveTilesetVersion(tileset) },
+      }),
     },
     async () => {
       const samples = await readTileSamples(tileset, dataType, z, x, y, env);
@@ -444,6 +453,19 @@ async function serveWatermask(
       x,
       y,
       format,
+      demand: demandFor(env, {
+        tileset: tileset.name,
+        id: `${scheme}/${z}/${x}/${y}.${format}`,
+        // The XYZ variant is Web Mercator; the -tms one is the geodetic grid
+        // the mesh tiles use, which is the point of having both.
+        grid: scheme === "watermask" ? "web-mercator" : "geographic-tms",
+        // Two parts of the key, because the key keeps them apart: the
+        // tileset's version and the upstream watermask build it was cut from.
+        epoch: {
+          source: watermask.version,
+          algo: resolveTilesetVersion(tileset),
+        },
+      }),
     },
     async () => {
       const mask = await watermask.provider.buildMask(bounds);
@@ -524,6 +546,17 @@ async function serveMesh(
       version: meshCacheVersion(resolveTilesetVersion(tileset), z, x, y),
       encoding,
       dataType,
+      demand: demandFor(env, {
+        tileset: tileset.name,
+        id: `cesium-mesh/${dataType}/${z}/${x}/${y}.terrain`,
+        // Quantized mesh is the Cesium geodetic grid: two root tiles wide,
+        // y from the south.
+        grid: "geographic-tms",
+        // The same per-tile version the key uses. A region-scoped patch
+        // gives its tiles their own, which is exactly what makes it able to
+        // invalidate only what it changed.
+        epoch: { algo: meshCacheVersion(resolveTilesetVersion(tileset), z, x, y) },
+      }),
       z,
       x,
       y,

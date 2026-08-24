@@ -1,3 +1,5 @@
+import { type Demand, writeDemand } from "./okibi.js";
+
 // Two-layer cache for generated tiles, plus ETag / If-None-Match support.
 //
 // L1: Cache API (Cloudflare edge cache). Keyed on the request URL after
@@ -48,6 +50,13 @@ export interface TileCacheParams {
    * `ttlMs` so edge hits cannot outlive the freshness window.
    */
   freshness?: FreshnessProbe;
+  /** What okibi records about this request, if anything.
+   *
+   *  Here rather than at the callers because this is the one place that
+   *  knows which layer answered and how long generating took. The parts a
+   *  route knows and this does not — which grid its coordinates are on,
+   *  what its URL looks like — come in with it. */
+  demand?: Demand;
 }
 
 export interface FreshnessProbe {
@@ -100,10 +109,33 @@ export async function cachedTile(
   const r2Key = buildR2Key(params);
   const cache = caches.default;
 
+  const record = (
+    cacheStatus: "hit" | "miss",
+    genMs: number,
+    bytes: number,
+  ): void => {
+    if (!params.demand) return;
+    // Both cache layers are hits as far as demand goes: what is being counted
+    // is that somebody wanted this tile, and which layer had the bytes is not
+    // what makes it worth warming.
+    writeDemand(req, params.demand, {
+      cacheStatus,
+      genMs,
+      bytes,
+      z: params.z,
+      x: params.x,
+      y: params.y,
+      format: params.format,
+    });
+  };
+
   // L1: edge cache.
   const l1Hit = await cache.match(cacheKey);
   logCache("L1", l1Hit ? "hit" : "miss", params);
-  if (l1Hit) return decorate(l1Hit, "L1", etag, params);
+  if (l1Hit) {
+    record("hit", 0, Number(l1Hit.headers.get("content-length") ?? 0));
+    return decorate(l1Hit, "L1", etag, params);
+  }
 
   // L2: R2.
   if (bucket) {
@@ -120,6 +152,7 @@ export async function cachedTile(
         const contentEncoding = obj.httpMetadata?.contentEncoding;
         const resp = buildResponse(body, contentType, "L2", etag, params, contentEncoding);
         ctx.waitUntil(cache.put(cacheKey, buildL1Internal(body, contentType, params, contentEncoding)));
+        record("hit", 0, body.byteLength);
         return resp;
       }
       logCache("L2", "stale", params);
@@ -131,7 +164,9 @@ export async function cachedTile(
 
   // L3: generate.
   logCache("gen", "miss", params);
+  const startedAt = Date.now();
   const { bytes, contentType, contentEncoding } = await generate();
+  record("miss", Date.now() - startedAt, bytes.byteLength);
   const resp = buildResponse(bytes, contentType, "MISS", etag, params, contentEncoding);
   const writes: Promise<unknown>[] = [
     cache.put(cacheKey, buildL1Internal(bytes, contentType, params, contentEncoding)),

@@ -13,6 +13,17 @@ routes = [{ pattern = "terrain.reearth.land", custom_domain = true }]
 [observability]
 enabled = true
 
+# Tile-demand events, one per tile request, read by okibi so that something
+# outside this worker can warm what people actually ask for after a version
+# bump. A miss is ~2.4s where a hit is 86ms, and a bump takes the whole
+# prefix at once, so afterwards every first visitor to every tile pays the
+# difference.
+#
+# See https://github.com/reearth/okibi and okibi.epochs.json.
+[[analytics_engine_datasets]]
+binding = "TILE_DEMAND"
+dataset = "tile_demand_1"
+
 # Rules for non-JS module imports.
 # .wasm is handled by wrangler automatically, but we declare it explicitly
 # to keep behavior stable across versions.
