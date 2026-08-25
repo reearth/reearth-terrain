@@ -14,7 +14,13 @@
 // Nothing in this file may fail a tile response.
 
 import { quadkeyForTile } from "@reearth/okibi";
-import { type Epoch, type TileDemand, createWriter, originOf } from "@reearth/okibi/writer";
+import {
+  type CacheLayer,
+  type Epoch,
+  type TileDemand,
+  createWriter,
+  originOf,
+} from "@reearth/okibi/writer";
 
 import epochs from "../okibi.epochs.json";
 
@@ -54,6 +60,12 @@ export interface Demand {
 
 export interface Measured {
   cacheStatus: "hit" | "miss";
+  /** Which layer had the bytes, when one did. Absent on a miss.
+   *
+   *  It does not change whether a tile is worth warming — a hit is somebody
+   *  wanting it either way — but it changes what serving it cost: L1 is free
+   *  and an R2 read is a priced operation. */
+  layer?: CacheLayer | undefined;
   genMs: number;
   bytes: number;
   z: number;
@@ -85,6 +97,7 @@ export function writeDemand(req: Request, demand: Demand, measured: Measured): v
       id: demand.id,
       qk,
       cacheStatus: measured.cacheStatus,
+      cacheLayer: measured.layer,
       epoch: demand.epoch,
       fmt: measured.format,
       // Unforgeable on purpose: a mark anyone could send would let anyone

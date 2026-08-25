@@ -119,6 +119,7 @@ export async function cachedTile(
 
   const record = (
     cacheStatus: "hit" | "miss",
+    layer: "edge" | "store" | undefined,
     genMs: number,
     bytes: number,
   ): void => {
@@ -128,6 +129,7 @@ export async function cachedTile(
     // what makes it worth warming.
     writeDemand(req, params.demand, {
       cacheStatus,
+      layer,
       genMs,
       bytes,
       z: params.z,
@@ -141,7 +143,7 @@ export async function cachedTile(
   const l1Hit = await cache.match(cacheKey);
   logCache("L1", l1Hit ? "hit" : "miss", params);
   if (l1Hit) {
-    record("hit", 0, Number(l1Hit.headers.get("content-length") ?? 0));
+    record("hit", "edge", 0, Number(l1Hit.headers.get("content-length") ?? 0));
     return decorate(l1Hit, "L1", etag, params);
   }
 
@@ -160,7 +162,7 @@ export async function cachedTile(
         const contentEncoding = obj.httpMetadata?.contentEncoding;
         const resp = buildResponse(body, contentType, "L2", etag, params, contentEncoding);
         ctx.waitUntil(cache.put(cacheKey, buildL1Internal(body, contentType, params, contentEncoding)));
-        record("hit", 0, body.byteLength);
+        record("hit", "store", 0, body.byteLength);
         return resp;
       }
       logCache("L2", "stale", params);
@@ -187,7 +189,7 @@ export async function cachedTile(
     // catch up with the generator. Reading it before would be reading the
     // time as of whatever generating last fetched.
     Promise.all(writes).finally(() =>
-      record("miss", Date.now() - startedAt, bytes.byteLength),
+      record("miss", undefined, Date.now() - startedAt, bytes.byteLength),
     ),
   );
   return resp;
