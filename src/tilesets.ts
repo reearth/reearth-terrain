@@ -11,6 +11,7 @@
 // cache key prefix and lets old entries age out via R2 lifecycle without
 // any client-visible breakage.
 
+import epochs from "../okibi.epochs.json";
 import { MapterhornSource, type DemSource } from "./dem.js";
 import { HybridMapterhornSource, MirroredMapterhornSource } from "./mapterhorn-mirror.js";
 
@@ -108,7 +109,13 @@ const PROTOMAPS_WATERMASK: WatermaskSource = {
 
 const MAPTERHORN_EGM08: Tileset = {
   name: "mapterhorn-egm08",
-  version: "5",
+  // Read from okibi.epochs.json rather than written here. This string is the
+  // R2 prefix every cached tile of this tileset lives under and the `algo`
+  // epoch okibi reports, and a second copy is a string that agrees with the
+  // key until somebody edits one — after which okibi matches an invalidation
+  // against tiles that never had that key, and warms the wrong set with
+  // nothing failing. Bumping it here is what makes a deploy an invalidation.
+  version: epochs.tilesets["mapterhorn-egm08"].algo,
   description:
     "Mapterhorn-merged global DEM blended with EGM2008 geoid undulations.",
   attribution: [
