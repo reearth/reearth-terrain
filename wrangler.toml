@@ -53,9 +53,21 @@ binding = "ASSETS"
 # directly, `/og.jpg`, etc.) still hits the asset router first.
 run_worker_first = ["/", "/index.html"]
 
-# Cron-driven stale L2 cache cleanup. Daily at 03:00 UTC sweeps R2 entries
-# under `cache/terrain/{tileset}/v{N}/` whose version is no longer in the
-# TILESETS registry. See `src/cleanup.ts`.
+# Two daily jobs on one tick at 03:00 UTC:
+#
+#   - stale L2 cache cleanup, sweeping R2 entries under
+#     `cache/terrain/{tileset}/v{N}/` whose version is no longer in the
+#     TILESETS registry (`src/cleanup.ts`)
+#   - the okibi demand digest for the UTC day before, kept in R2 under
+#     `okibi/digests/` past Analytics Engine's three months
+#     (`src/okibi-digest.ts`)
+#
+# OKIBI_ACCOUNT_ID and OKIBI_CF_API_TOKEN are secrets rather than vars. The
+# token obviously; the account id because this repository is public and an
+# account id is an identifier nobody needs published.
+#
+#   wrangler secret put OKIBI_ACCOUNT_ID
+#   wrangler secret put OKIBI_CF_API_TOKEN
 [triggers]
 crons = ["0 3 * * *"]
 

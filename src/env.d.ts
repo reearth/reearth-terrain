@@ -23,4 +23,24 @@ interface Env {
    *   wrangler secret put OKIBI_WARM_SECRET
    */
   OKIBI_WARM_SECRET?: string;
+
+  /**
+   * Reads the Analytics Engine SQL API, for the daily digest the cron takes.
+   * Absent means no digest is taken and tiles are served exactly as before —
+   * the events are still written either way.
+   *
+   *   wrangler secret put OKIBI_CF_API_TOKEN
+   *
+   * See `src/okibi-digest.ts`.
+   */
+  OKIBI_CF_API_TOKEN?: string;
+
+  /**
+   * The account whose Analytics Engine dataset the digest reads. A secret
+   * rather than a var only because this repository is public and an account
+   * id is an identifier nobody needs published.
+   *
+   *   wrangler secret put OKIBI_ACCOUNT_ID
+   */
+  OKIBI_ACCOUNT_ID?: string;
 }

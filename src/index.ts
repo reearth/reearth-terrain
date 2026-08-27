@@ -23,6 +23,7 @@ import { cachedTile, bodyEtag, matchesIfNoneMatch } from "./cache.js";
 import { demandFor } from "./okibi.js";
 import { meshCacheVersion } from "./cache-patches.js";
 import { runCleanup } from "./cleanup.js";
+import { dayBefore, takeDigest } from "./okibi-digest.js";
 import {
   MESH_GRID_SIZE,
   buildWaterMask,
@@ -183,6 +184,16 @@ export default {
     ctx.waitUntil(
       runCleanup(env.R2, resolveLiveCleanupTilesets()).catch((err) => {
         console.error("scheduled: cleanup failed", err);
+      }),
+    );
+
+    // The demand digest rides on the same tick. Independent of the cleanup:
+    // one failing is not a reason for the other not to run, and a digest that
+    // fails is a digest missing for a day, not something to retry against the
+    // same finished day.
+    ctx.waitUntil(
+      takeDigest(env, dayBefore(controller.scheduledTime)).catch((err) => {
+        console.warn("okibi: digest failed", err);
       }),
     );
   },
