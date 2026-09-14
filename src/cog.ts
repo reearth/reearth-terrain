@@ -78,6 +78,7 @@ class R2CogSource implements CogSource {
   // Insertion order is eviction order: least recently used first.
   #cache = new Map<string, ArrayBuffer>();
   #cacheBytes = 0;
+  #inflight = new Map<string, Promise<ArrayBuffer>>();
 
   constructor(bucket: R2Bucket, key: string) {
     this.#bucket = bucket;
@@ -128,6 +129,27 @@ class R2CogSource implements CogSource {
       return { offset: slice.offset, length: hit.byteLength, data: hit.slice(0) };
     }
 
+    // Blocks are read in parallel and neighbouring blocks share the tiles on
+    // their common edge, so without this the same range would be bought
+    // several times over at once.
+    const existing = this.#inflight.get(cacheKey);
+    if (existing) {
+      const buf = await existing;
+      return { offset: slice.offset, length: buf.byteLength, data: buf.slice(0) };
+    }
+
+    const read = this.#read(slice)
+      .then((buf) => {
+        this.#remember(cacheKey, buf);
+        return buf;
+      })
+      .finally(() => this.#inflight.delete(cacheKey));
+    this.#inflight.set(cacheKey, read);
+    const buf = await read;
+    return { offset: slice.offset, length: buf.byteLength, data: buf };
+  }
+
+  async #read(slice: Slice): Promise<ArrayBuffer> {
     // Every one of these is a billable class B operation, and together they
     // are the largest line on this account's bill.
     countRead(this.#key, slice.length);
@@ -139,13 +161,15 @@ class R2CogSource implements CogSource {
     if (this.#fileSize === null && obj.size != null) {
       this.#fileSize = obj.size;
     }
-    const buf = await obj.arrayBuffer();
-    this.#remember(cacheKey, buf);
-    return { offset: slice.offset, length: buf.byteLength, data: buf };
+    return obj.arrayBuffer();
   }
 
   #remember(key: string, buf: ArrayBuffer): void {
     if (buf.byteLength > SLICE_CACHE_BYTES) return;
+    // Overwriting an entry replaces bytes already counted; drop the old
+    // figure first or the budget drifts upward and evicts everything.
+    const previous = this.#cache.get(key);
+    if (previous) this.#cacheBytes -= previous.byteLength;
     this.#cache.set(key, buf.slice(0));
     this.#cacheBytes += buf.byteLength;
     while (this.#cacheBytes > SLICE_CACHE_BYTES) {

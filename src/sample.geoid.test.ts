@@ -96,6 +96,26 @@ describe("sampleGeoidAtPoints", () => {
     expect(get.mock.calls.length).toBe(afterTwo);
   });
 
+  it("buys a range once when neighbouring blocks race for it", async () => {
+    // Blocks are read in parallel and adjacent blocks share the tiles on
+    // their common edge, so the same byte range is asked for concurrently.
+    const { bucket, get } = countingBucket(await tiffBytes());
+    const key = freshKey();
+
+    const onEdge = [
+      atPixel(15.5, 4.5),
+      atPixel(16.5, 4.5),
+      atPixel(15.5, 5.5),
+      atPixel(16.5, 5.5),
+    ];
+    await sampleGeoidAtPoints(bucket, key, onEdge);
+    const first = get.mock.calls.length;
+
+    // Nothing beyond the ranges those four already paid for.
+    await sampleGeoidAtPoints(bucket, key, onEdge);
+    expect(get.mock.calls.length).toBe(first);
+  });
+
   it("normalizes longitudes outside the raster's domain", async () => {
     const { bucket } = countingBucket(await tiffBytes());
     const here = atPixel(10.3, 4.7);
