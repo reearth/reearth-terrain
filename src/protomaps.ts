@@ -23,6 +23,7 @@
 
 import type { RangeResponse, Source } from "pmtiles";
 import { FetchSource } from "pmtiles";
+import { countRead } from "./r2-reads.js";
 
 const UPSTREAM_BASE = "https://build.protomaps.com";
 const MAX_PROBE_DAYS = 7;
@@ -102,6 +103,7 @@ export class R2PmtilesSource implements Source {
   }
 
   async getBytes(offset: number, length: number): Promise<RangeResponse> {
+    countRead(this.#key, length);
     const obj = await this.#bucket.get(this.#key, {
       range: { offset, length },
     });

@@ -12,6 +12,8 @@
 
 import GeoTIFF, { type GeoTIFFImage } from "geotiff";
 
+import { countRead } from "./r2-reads.js";
+
 interface Slice {
   offset: number;
   length: number;
@@ -35,6 +37,10 @@ class R2CogSource implements CogSource {
     this.#key = key;
   }
 
+  // geotiff.js hands this a batch of slices and this issues one R2 read per
+  // slice. Whether the batch is usually one slice or usually twenty — and so
+  // whether coalescing adjacent ranges into a single read would divide the
+  // class B bill or do nothing — is what the tally in src/r2-reads.ts is for.
   async fetch(slices: Slice[], signal?: AbortSignal): Promise<ArrayBufferLike[]> {
     return Promise.all(
       slices.map(async (s) => (await this.fetchSlice(s, signal)).data),
@@ -42,6 +48,9 @@ class R2CogSource implements CogSource {
   }
 
   async fetchSlice(slice: Slice, _signal?: AbortSignal) {
+    // Every one of these is a billable class B operation, and together they
+    // are the largest line on this account's bill.
+    countRead(this.#key, slice.length);
     const obj = await this.#bucket.get(this.#key, {
       range: { offset: slice.offset, length: slice.length },
     });

@@ -20,6 +20,7 @@ import {
   type TileDemand,
   createWriter,
   originOf,
+  siteOf,
 } from "@reearth/okibi/writer";
 
 import epochs from "../okibi.epochs.json";
@@ -104,6 +105,10 @@ export function writeDemand(req: Request, demand: Demand, measured: Measured): v
       // remove their own requests from the record of what people ask for,
       // and demand that is not recorded is demand that is never warmed.
       origin: originOf(req, demand.warmSecret),
+      // Which site embedded this tile, as a bare origin. This service
+      // is a dependency of other people's maps and nothing else it
+      // records says whose. An origin, never a page URL — see siteOf.
+      site: siteOf(req),
       genMs: measured.genMs,
       bytes: measured.bytes,
       z: measured.z,

@@ -26,6 +26,7 @@ import { PMTiles } from "pmtiles";
 import { R2PmtilesSource } from "./protomaps.js";
 import { decode_terrarium_webp, DecodedTile } from "./wasm/reearth-terrain-wasm/reearth_terrain_wasm.js";
 import type { DemSource, DemTile } from "./dem.js";
+import { countRead } from "./r2-reads.js";
 
 export interface MirroredMapterhornOptions {
   /** R2 prefix the mirror worker writes under. Defaults to `mirror/mapterhorn`. */
@@ -157,7 +158,9 @@ export class MirroredMapterhornSource implements DemSource {
   }
 
   async #loadPointer(archive: string): Promise<PointerCacheEntry> {
-    const obj = await this.#r2.get(`${this.#prefix}/${archive}.latest.json`);
+    const key = `${this.#prefix}/${archive}.latest.json`;
+    countRead(key, 0);
+    const obj = await this.#r2.get(key);
     const expires = Date.now() + POINTER_TTL_MS;
     if (!obj) return { value: null, expires };
     const parsed = await obj.json<PerArchivePointer>();
