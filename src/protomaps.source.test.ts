@@ -3,9 +3,13 @@
 // source turns those into a few reads rather than one per tile, and that the
 // bytes it hands back are still exactly the bytes that were asked for.
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { R2PmtilesSource } from "./protomaps.js";
+import { R2PmtilesSource, __resetChunkCache } from "./protomaps.js";
+
+beforeEach(() => {
+  __resetChunkCache();
+});
 
 const MiB = 1024 * 1024;
 
@@ -139,6 +143,29 @@ describe("R2PmtilesSource", () => {
     const src = new R2PmtilesSource(bucket, "mirror/g.pmtiles");
 
     expect((await src.getBytes(0, 16)).etag).toBe('"archive-v1"');
+  });
+
+  it("holds one budget across every archive, not one each", async () => {
+    // A request whose points are spread over the globe touches dozens of
+    // regional archives. If each kept its own budget the isolate would run
+    // out of memory, so the cap is shared and the oldest chunk goes first.
+    const bytes = archive(2 * MiB);
+    const { bucket, get } = countingBucket(bytes);
+    const sources = Array.from(
+      { length: 20 },
+      (_, i) => new R2PmtilesSource(bucket, `mirror/region-${i}.pmtiles`),
+    );
+
+    for (const src of sources) await src.getBytes(0, 16);
+    expect(get.mock.calls.length).toBe(20);
+
+    // The most recent archives are still resident...
+    await sources[19]!.getBytes(32, 16);
+    expect(get.mock.calls.length).toBe(20);
+
+    // ...and the first one was evicted to make room for them.
+    await sources[0]!.getBytes(32, 16);
+    expect(get.mock.calls.length).toBe(21);
   });
 
   it("keys its cache to the archive it was built for", async () => {

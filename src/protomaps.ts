@@ -88,8 +88,28 @@ function formatUtcDate(d: Date): string {
  */
 const CHUNK_BYTES = 1024 * 1024;
 
-/** Per-archive budget for chunks held in the isolate. */
-const CHUNK_CACHE_BYTES = 8 * 1024 * 1024;
+/**
+ * Budget for chunks held in the isolate, across every archive.
+ *
+ * Deliberately not per-source. `MapterhornMirror` keeps one `PMTiles` — and
+ * so one source — per regional archive in an unbounded map, and a request
+ * whose points are spread over the globe touches forty of them. A per-source
+ * budget would multiply by that; the isolate has 128 MB and src/cesium.ts
+ * records what running into that looks like.
+ */
+const CHUNK_CACHE_BYTES = 16 * 1024 * 1024;
+
+/** Cached chunks, keyed `${r2 key}#${chunk index}`, LRU by insertion order. */
+const chunkCache = new Map<string, Uint8Array>();
+let chunkCacheBytes = 0;
+const chunkInflight = new Map<string, Promise<Uint8Array>>();
+
+/** Test-only: drop the shared chunk cache between cases. */
+export function __resetChunkCache(): void {
+  chunkCache.clear();
+  chunkInflight.clear();
+  chunkCacheBytes = 0;
+}
 
 /**
  * PMTiles `Source` backed by an R2 object. Used when
@@ -106,10 +126,6 @@ export class R2PmtilesSource implements Source {
   #key: string;
   #identity: string;
   #etag: string | undefined;
-  // Insertion order is eviction order: least recently used first.
-  #chunks = new Map<number, Uint8Array>();
-  #chunkBytes = 0;
-  #inflight = new Map<number, Promise<Uint8Array>>();
 
   constructor(bucket: R2Bucket, key: string) {
     this.#bucket = bucket;
@@ -154,25 +170,28 @@ export class R2PmtilesSource implements Source {
   }
 
   #chunk(index: number): Promise<Uint8Array> {
-    const cached = this.#chunks.get(index);
+    const id = `${this.#key}#${index}`;
+    const cached = chunkCache.get(id);
     if (cached) {
-      this.#chunks.delete(index);
-      this.#chunks.set(index, cached);
+      // Refresh recency so the chunks a burst of tiles keeps landing in are
+      // the last ones evicted.
+      chunkCache.delete(id);
+      chunkCache.set(id, cached);
       return Promise.resolve(cached);
     }
 
     // Sparse-point requests fan out over tiles in parallel, so without this
     // the same chunk would be bought several times over concurrently.
-    const existing = this.#inflight.get(index);
+    const existing = chunkInflight.get(id);
     if (existing) return existing;
 
     const promise = this.#read(index * CHUNK_BYTES, CHUNK_BYTES)
       .then((bytes) => {
-        this.#remember(index, bytes);
+        remember(id, bytes);
         return bytes;
       })
-      .finally(() => this.#inflight.delete(index));
-    this.#inflight.set(index, promise);
+      .finally(() => chunkInflight.delete(id));
+    chunkInflight.set(id, promise);
     return promise;
   }
 
@@ -184,16 +203,17 @@ export class R2PmtilesSource implements Source {
     return new Uint8Array(await obj.arrayBuffer());
   }
 
-  #remember(index: number, bytes: Uint8Array): void {
-    this.#chunks.set(index, bytes);
-    this.#chunkBytes += bytes.byteLength;
-    while (this.#chunkBytes > CHUNK_CACHE_BYTES) {
-      const oldest = this.#chunks.keys().next();
-      if (oldest.done) break;
-      const evicted = this.#chunks.get(oldest.value)!;
-      this.#chunks.delete(oldest.value);
-      this.#chunkBytes -= evicted.byteLength;
-    }
+}
+
+function remember(id: string, bytes: Uint8Array): void {
+  chunkCache.set(id, bytes);
+  chunkCacheBytes += bytes.byteLength;
+  while (chunkCacheBytes > CHUNK_CACHE_BYTES) {
+    const oldest = chunkCache.keys().next();
+    if (oldest.done) break;
+    const evicted = chunkCache.get(oldest.value)!;
+    chunkCache.delete(oldest.value);
+    chunkCacheBytes -= evicted.byteLength;
   }
 }
 
