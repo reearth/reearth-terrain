@@ -172,7 +172,7 @@ export default {
     return withCors(await handle(req, env, ctx));
   },
 
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     console.log("scheduled: cleanup tick", {
       cron: controller.cron,
       scheduledTime: controller.scheduledTime,
@@ -181,21 +181,26 @@ export default {
       console.warn("scheduled: R2 binding missing, skipping cleanup");
       return;
     }
-    ctx.waitUntil(
-      runCleanup(env.R2, resolveLiveCleanupTilesets()).catch((err) => {
-        console.error("scheduled: cleanup failed", err);
-      }),
-    );
 
-    // The demand digest rides on the same tick. Independent of the cleanup:
-    // one failing is not a reason for the other not to run, and a digest that
-    // fails is a digest missing for a day, not something to retry against the
-    // same finished day.
-    ctx.waitUntil(
-      takeDigest(env, dayBefore(controller.scheduledTime)).catch((err) => {
-        console.warn("okibi: digest failed", err);
-      }),
-    );
+    // Awaited rather than handed to `ctx.waitUntil`. Work passed to waitUntil
+    // runs after the invocation ends, and only for as long as the runtime is
+    // willing to keep an ended invocation alive — which is not a budget
+    // either of these fits in: the sweep deletes thousands of objects and the
+    // digest reads a day of events. It cut Papers' and Buildings' digests off
+    // on 2026-09-07. Awaiting keeps the invocation open until both finish.
+    //
+    // Settled together rather than in sequence, because one failing is not a
+    // reason for the other not to run.
+    const [swept, digest] = await Promise.allSettled([
+      runCleanup(env.R2, resolveLiveCleanupTilesets()),
+      takeDigest(env, dayBefore(controller.scheduledTime)),
+    ]);
+
+    // Logged rather than thrown. A failed sweep is stale objects until
+    // tomorrow, and a failed digest is a day missing — neither is worth
+    // retrying against the same finished day.
+    if (swept.status === "rejected") console.error("scheduled: cleanup failed", swept.reason);
+    if (digest.status === "rejected") console.warn("okibi: digest failed", digest.reason);
   },
 } satisfies ExportedHandler<Env>;
 
