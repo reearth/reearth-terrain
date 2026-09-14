@@ -202,6 +202,11 @@ export async function sampleGeoidAtPoints(
   // points — which is what a real request looks like, a camera's worth of
   // terrain rather than points scattered over the globe — is read once
   // instead of once per point.
+  //
+  // The bin is the COG's own tile, taken from the file rather than assumed,
+  // so a block's window falls inside one stored tile and costs one read.
+  // (EGM2008 as stored here is 8640x4321 in 256x256 tiles, 578 of them.)
+  const [binW, binH] = binSize(image);
   type Block = { x0: number; y0: number; x1: number; y1: number; members: number[] };
   const blocks = new Map<string, Block>();
   const pixels: ({ px: number; py: number } | null)[] = new Array(points.length).fill(null);
@@ -219,7 +224,7 @@ export async function sampleGeoidAtPoints(
     // the per-point read used to do so results don't move at the edges.
     const x0 = Math.max(0, Math.min(width - 2, Math.floor(px)));
     const y0 = Math.max(0, Math.min(height - 2, Math.floor(py)));
-    const key = `${x0 >> BLOCK_BITS}/${y0 >> BLOCK_BITS}`;
+    const key = `${Math.floor(x0 / binW)}/${Math.floor(y0 / binH)}`;
     const block = blocks.get(key);
     if (block) {
       block.x0 = Math.min(block.x0, x0);
@@ -268,11 +273,27 @@ export async function sampleGeoidAtPoints(
   return out;
 }
 
-/** Points whose 2x2 footprints share a 256x256 cell are read as one window. */
-const BLOCK_BITS = 8;
-
 /** How many block windows may be in memory at once. */
 const MAX_CONCURRENT_BLOCKS = 8;
+
+/** Ceiling on one window, in pixels, so a block is bounded whatever it reads. */
+const MAX_BLOCK_PIXELS = 256 * 256;
+
+/**
+ * The grid points are binned on: the raster's own tile, so a block's window
+ * lands inside one stored tile and costs one read. A striped file reports its
+ * full width as the tile width, which would make a block far too tall to hold
+ * in a 128 MB isolate, so the cell is halved until it fits the ceiling.
+ */
+function binSize(image: import("geotiff").GeoTIFFImage): [number, number] {
+  let w = Math.max(1, image.getTileWidth() || image.getWidth());
+  let h = Math.max(1, image.getTileHeight() || image.getHeight());
+  while (w * h > MAX_BLOCK_PIXELS) {
+    if (w >= h) w = Math.ceil(w / 2);
+    else h = Math.ceil(h / 2);
+  }
+  return [w, h];
+}
 
 async function inBatches<T>(
   items: T[],
