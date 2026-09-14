@@ -61,7 +61,8 @@ function countingBucket(bytes: Uint8Array) {
       };
     },
   );
-  return { bucket: { get } as unknown as R2Bucket, get };
+  const head = vi.fn(async () => ({ size: bytes.byteLength }));
+  return { bucket: { get, head } as unknown as R2Bucket, get, head };
 }
 
 describe("R2PmtilesSource", () => {
@@ -136,6 +137,33 @@ describe("R2PmtilesSource", () => {
     const res = await src.getBytes(size - 100, 4096);
     expectRange(res.data, bytes, size - 100, 4096);
     expect(res.data.byteLength).toBe(100);
+  });
+
+  it("answers a read that runs off the end of the last chunk", async () => {
+    // The chunk grid does not stop where the archive does. An archive whose
+    // size lands on a chunk boundary, read near its end, needs the chunk
+    // *after* the last one — and R2 answers a range starting at or past the
+    // end of an object with null, the same answer it gives for an object
+    // that is not there. Reading a whole range in one get never met this,
+    // because R2 clamps a range to the object.
+    const size = 2 * MiB;
+    const bytes = archive(size);
+    const { bucket } = countingBucket(bytes);
+    const src = new R2PmtilesSource(bucket, "mirror/boundary.pmtiles");
+
+    const res = await src.getBytes(size - 10, 4096);
+    expectRange(res.data, bytes, size - 10, 4096);
+    expect(res.data.byteLength).toBe(10);
+  });
+
+  it("still reports an archive that genuinely is not there", async () => {
+    const bucket = {
+      get: vi.fn(async () => null),
+      head: vi.fn(async () => null),
+    } as unknown as R2Bucket;
+    const src = new R2PmtilesSource(bucket, "mirror/missing.pmtiles");
+
+    await expect(src.getBytes(0, 16)).rejects.toThrow(/not found/);
   });
 
   it("reports the archive's etag so pmtiles can spot a rotation", async () => {

@@ -126,6 +126,7 @@ export class R2PmtilesSource implements Source {
   #key: string;
   #identity: string;
   #etag: string | undefined;
+  #size: number | undefined;
 
   constructor(bucket: R2Bucket, key: string) {
     this.#bucket = bucket;
@@ -196,10 +197,25 @@ export class R2PmtilesSource implements Source {
   }
 
   async #read(offset: number, length: number): Promise<Uint8Array> {
+    // The chunk grid does not stop where the archive does: a caller asking
+    // for the last few bytes can pull in the chunk after the one holding
+    // them. R2 answers a range that starts at or past the end of an object
+    // with null, which is the same answer it gives for an object that isn't
+    // there — so ask only when we don't already know the size.
+    if (this.#size !== undefined && offset >= this.#size) return new Uint8Array(0);
+
     countRead(this.#key, length);
     const obj = await this.#bucket.get(this.#key, { range: { offset, length } });
-    if (!obj) throw new Error(`pmtiles archive not found in R2: ${this.#key}`);
+    if (!obj) {
+      const meta = await this.#bucket.head(this.#key);
+      if (meta) {
+        this.#size = meta.size;
+        if (offset >= meta.size) return new Uint8Array(0);
+      }
+      throw new Error(`pmtiles archive not found in R2: ${this.#key}`);
+    }
     this.#etag ??= obj.httpEtag;
+    this.#size ??= obj.size;
     return new Uint8Array(await obj.arrayBuffer());
   }
 
