@@ -122,19 +122,32 @@ export function cellOf(z: number, x: number, y: number): string {
 
 export interface Sweep {
   cells: number;
-  requests: number;
+  /** Tiles or points asked for, not HTTP requests — see `noteAsk`. */
+  asks: number;
   decision: Decision;
 }
 
-/** Record one tile for this client, and say whether this looks like a sweep. */
-export function noteTile(
+/**
+ * Record what this client just asked for, and say whether it looks like a
+ * sweep.
+ *
+ * `cells` is every cell the request touches and `asks` is how many things it
+ * asked for, because those are not one apiece on every route. A tile request
+ * is one of each. A `/heights.json` request carries up to 256 points and was
+ * measured spanning a median of 17 cells and a maximum of 88 — so counting it
+ * as a single ask in a single cell made the widest-ranging route the one this
+ * could see least. It is the same question either way: how much ground did
+ * this client cover, and how much did it take.
+ */
+export function noteAsk(
   key: string,
-  cell: string,
+  cells: string[],
+  asks: number,
   policy: Policy,
   now = Date.now(),
 ): Sweep {
-  if (policy.crawl === "off") return { cells: 0, requests: 0, decision: "allow" };
-  if (listed(policy.allow, key)) return { cells: 0, requests: 0, decision: "allow" };
+  if (policy.crawl === "off") return { cells: 0, asks: 0, decision: "allow" };
+  if (listed(policy.allow, key)) return { cells: 0, asks: 0, decision: "allow" };
 
   let track = tracks.get(key);
   if (!track || now - track.since > WINDOW_MS) {
@@ -142,8 +155,11 @@ export function noteTile(
   } else {
     tracks.delete(key); // re-inserted below, which promotes it to most recent
   }
-  track.requests++;
-  if (track.cells.size < CELLS_PER_CLIENT) track.cells.add(cell);
+  track.requests += asks;
+  for (const cell of cells) {
+    if (track.cells.size >= CELLS_PER_CLIENT) break;
+    track.cells.add(cell);
+  }
   tracks.set(key, track);
 
   while (tracks.size > CLIENTS) {
@@ -156,7 +172,7 @@ export function noteTile(
     track.requests >= MIN_REQUESTS && track.cells.size >= policy.crawlCells;
   return {
     cells: track.cells.size,
-    requests: track.requests,
+    asks: track.requests,
     decision: sweeping ? verdict(policy.crawl) : "allow",
   };
 }

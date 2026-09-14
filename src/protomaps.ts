@@ -24,6 +24,7 @@
 import type { RangeResponse, Source } from "pmtiles";
 import { FetchSource } from "pmtiles";
 import { countRead } from "./r2-reads.js";
+import { cachedRange } from "./range-cache.js";
 import { READ_TIMEOUT_MS, shared } from "./single-flight.js";
 
 const UPSTREAM_BASE = "https://build.protomaps.com";
@@ -199,6 +200,18 @@ export class R2PmtilesSource implements Source {
   }
 
   async #read(offset: number, length: number): Promise<Uint8Array> {
+    // Through the colo's cache first, for the reason src/range-cache.ts gives:
+    // the chunk map above belongs to this isolate and dies with it.
+    const bytes = await cachedRange(this.#key, offset, length, async () => {
+      const read = await this.#readFromR2(offset, length);
+      const copy = new Uint8Array(read.byteLength);
+      copy.set(read);
+      return copy.buffer;
+    });
+    return new Uint8Array(bytes);
+  }
+
+  async #readFromR2(offset: number, length: number): Promise<Uint8Array> {
     // The chunk grid does not stop where the archive does: a caller asking
     // for the last few bytes can pull in the chunk after the one holding
     // them. R2 answers a range that starts at or past the end of an object

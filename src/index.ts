@@ -23,12 +23,13 @@ import { cachedTile, bodyEtag, matchesIfNoneMatch } from "./cache.js";
 import { demandFor } from "./okibi.js";
 import { siteOf } from "@reearth/okibi/writer";
 import { loadPolicy } from "./policy.js";
+import { withRangeCache } from "./range-cache.js";
 import {
   cellOf,
   checkRateLimit,
   clientKey,
   clientsOn,
-  noteTile,
+  noteAsk,
   refusal,
 } from "./rate-limit.js";
 import { meshCacheVersion } from "./cache-patches.js";
@@ -180,7 +181,8 @@ export default {
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
-    return withCors(await handle(req, env, ctx));
+    // One cache-operation budget for the whole request — see src/range-cache.ts.
+    return withCors(await withRangeCache(() => handle(req, env, ctx)));
   },
 
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
@@ -222,16 +224,35 @@ export default {
  * places it well enough — a sampler sweeping the globe moves between cells
  * exactly as a tile sweep does.
  */
-function cellOfRequest(url: URL): string | null {
+function cellsOfRequest(url: URL): { cells: string[]; asks: number } | null {
   const tile = /\/(\d+)\/(\d+)\/(\d+)(?:\.[a-z0-9]+)?$/.exec(url.pathname);
-  if (tile) return cellOf(Number(tile[1]), Number(tile[2]), Number(tile[3]));
+  if (tile) {
+    return {
+      cells: [cellOf(Number(tile[1]), Number(tile[2]), Number(tile[3]))],
+      asks: 1,
+    };
+  }
 
   if (url.pathname !== "/heights.json") return null;
-  const first = (url.searchParams.get("points") ?? "").split(";", 1)[0] ?? "";
-  const [lonRaw, latRaw] = first.split(",");
-  const lon = Number(lonRaw);
-  const lat = Number(latRaw);
-  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+
+  // Every point, not just the first. A request here carries up to 256 of them
+  // and covers a median of 17 cells, so reading only the first made the route
+  // that ranges widest the one the sweep rule could see least.
+  const cells = new Set<string>();
+  let asks = 0;
+  for (const segment of (url.searchParams.get("points") ?? "").split(";")) {
+    const [lonRaw, latRaw] = segment.split(",");
+    const lon = Number(lonRaw);
+    const lat = Number(latRaw);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    asks++;
+    if (cells.size < MAX_POINTS_PER_REQUEST) cells.add(cellOfLonLat(lon, lat));
+  }
+  return asks > 0 ? { cells: [...cells], asks } : null;
+}
+
+/** The z8 cell containing (lon, lat), in the same form as `cellOf`. */
+function cellOfLonLat(lon: number, lat: number): string {
   const n = 1 << 8;
   const clamped = Math.max(-85.0511287798066, Math.min(85.0511287798066, lat));
   const rad = (clamped * Math.PI) / 180;
@@ -249,8 +270,8 @@ function cellOfRequest(url: URL): string | null {
  * would actually catch. See src/rate-limit.ts and src/policy.ts.
  */
 async function guard(req: Request, url: URL, env: Env): Promise<Response | null> {
-  const cell = cellOfRequest(url);
-  if (!cell) return null; // not a generated route; nothing here is expensive
+  const asked = cellsOfRequest(url);
+  if (!asked) return null; // not a generated route; nothing here is expensive
 
   const policy = await loadPolicy(env);
   if (policy.rateLimit === "off" && policy.crawl === "off") return null;
@@ -270,18 +291,19 @@ async function guard(req: Request, url: URL, env: Env): Promise<Response | null>
     if (rate === "refuse") return refusal("rate");
   }
 
-  const sweep = noteTile(key, cell, policy);
+  const sweep = noteAsk(key, asked.cells, asked.asks, policy);
   if (sweep.decision !== "allow") {
     console.log("limit", {
       rule: "sweep",
       decision: sweep.decision,
       origin,
+      path: url.pathname,
       // A floor, not a total: only what this isolate has seen. It says
       // whether an origin is one client or a crowd, which decides whether a
       // limit is the right tool at all. See clientsOn.
       clients: clientsOn(origin),
       cells: sweep.cells,
-      requests: sweep.requests,
+      asks: sweep.asks,
     });
     if (sweep.decision === "refuse") return refusal("sweep");
   }

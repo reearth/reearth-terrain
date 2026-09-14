@@ -13,6 +13,7 @@
 import GeoTIFF, { type GeoTIFFImage } from "geotiff";
 
 import { countRead } from "./r2-reads.js";
+import { cachedRange } from "./range-cache.js";
 import { OPEN_TIMEOUT_MS, READ_TIMEOUT_MS, shared } from "./single-flight.js";
 
 export interface Slice {
@@ -148,6 +149,15 @@ class R2CogSource implements CogSource {
   }
 
   async #read(slice: Slice): Promise<ArrayBuffer> {
+    // Through the colo's cache first: the memo above dies with this isolate,
+    // and a cold isolate re-buying everything is most of what is left on the
+    // bill. See src/range-cache.ts.
+    return cachedRange(this.#key, slice.offset, slice.length, () =>
+      this.#readFromR2(slice),
+    );
+  }
+
+  async #readFromR2(slice: Slice): Promise<ArrayBuffer> {
     // Every one of these is a billable class B operation, and together they
     // are the largest line on this account's bill.
     countRead(this.#key, slice.length);

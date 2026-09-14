@@ -7,7 +7,7 @@ import {
   cellOf,
   checkRateLimit,
   clientKey,
-  noteTile,
+  noteAsk,
   refusal,
 } from "./rate-limit.js";
 
@@ -119,7 +119,7 @@ describe("cellOf", () => {
   });
 });
 
-describe("noteTile", () => {
+describe("noteAsk", () => {
   const sweeping = policy({ crawl: "enforce", crawlCells: 64 });
 
   it("leaves a viewport alone, however many tiles it loads", () => {
@@ -127,9 +127,14 @@ describe("noteTile", () => {
     // cells. Breadth is what separates it from a sweep, not volume.
     let last;
     for (let i = 0; i < 600; i++) {
-      last = noteTile("viewer", cellOf(14, 14549 + (i % 30), 6450 + Math.floor(i / 30)), sweeping);
+      last = noteAsk(
+        "viewer",
+        [cellOf(14, 14549 + (i % 30), 6450 + Math.floor(i / 30))],
+        1,
+        sweeping,
+      );
     }
-    expect(last!.requests).toBe(600);
+    expect(last!.asks).toBe(600);
     expect(last!.cells).toBeLessThan(64);
     expect(last!.decision).toBe("allow");
   });
@@ -137,7 +142,7 @@ describe("noteTile", () => {
   it("catches a client walking across the world", () => {
     let last;
     for (let i = 0; i < 400; i++) {
-      last = noteTile("sweeper", cellOf(14, i * 256, 6450), sweeping);
+      last = noteAsk("sweeper", [cellOf(14, i * 256, 6450)], 1, sweeping);
     }
     expect(last!.decision).toBe("refuse");
   });
@@ -149,7 +154,7 @@ describe("noteTile", () => {
     const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % 60000;
     let last;
     for (let i = 0; i < 400; i++) {
-      last = noteTile("shuffled", cellOf(14, rnd(), rnd() % 16000), sweeping);
+      last = noteAsk("shuffled", [cellOf(14, rnd(), rnd() % 16000)], 1, sweeping);
     }
     expect(last!.decision).toBe("refuse");
   });
@@ -159,7 +164,7 @@ describe("noteTile", () => {
     // requests to be a sweep.
     let last;
     for (let i = 0; i < 100; i++) {
-      last = noteTile("browser", cellOf(14, i * 256, 6450), sweeping);
+      last = noteAsk("browser", [cellOf(14, i * 256, 6450)], 1, sweeping);
     }
     expect(last!.cells).toBeGreaterThanOrEqual(64);
     expect(last!.decision).toBe("allow");
@@ -168,32 +173,58 @@ describe("noteTile", () => {
   it("only writes it down when observing", () => {
     const p = policy({ crawl: "observe", crawlCells: 64 });
     let last;
-    for (let i = 0; i < 400; i++) last = noteTile("obs", cellOf(14, i * 256, 6450), p);
+    for (let i = 0; i < 400; i++) last = noteAsk("obs", [cellOf(14, i * 256, 6450)], 1, p);
     expect(last!.decision).toBe("observed");
   });
 
   it("forgets a client once its minute is over", () => {
     const t0 = 1_000_000;
     for (let i = 0; i < 400; i++) {
-      noteTile("slow", cellOf(14, i * 256, 6450), sweeping, t0);
+      noteAsk("slow", [cellOf(14, i * 256, 6450)], 1, sweeping, t0);
     }
-    const after = noteTile("slow", cellOf(14, 0, 6450), sweeping, t0 + 61_000);
-    expect(after.requests).toBe(1);
+    const after = noteAsk("slow", [cellOf(14, 0, 6450)], 1, sweeping, t0 + 61_000);
+    expect(after.asks).toBe(1);
     expect(after.decision).toBe("allow");
   });
 
   it("does nothing at all when crawl detection is off", () => {
     let last;
-    for (let i = 0; i < 400; i++) last = noteTile("off", cellOf(14, i * 256, 6450), policy());
+    for (let i = 0; i < 400; i++) last = noteAsk("off", [cellOf(14, i * 256, 6450)], 1, policy());
     expect(last!.decision).toBe("allow");
-    expect(last!.requests).toBe(0);
+    expect(last!.asks).toBe(0);
+  });
+
+  it("counts every cell a single wide request touches", () => {
+    // A /heights.json request carries up to 256 points and was measured
+    // spanning a median of 17 cells. Four of those reach the threshold; under
+    // the old shape, which read only the first point, forty would not have.
+    const wide = Array.from({ length: 17 }, (_, i) => cellOf(14, i * 256, 6450));
+    let last;
+    for (let i = 0; i < 4; i++) last = noteAsk("heights", wide, 64, sweeping);
+    expect(last!.cells).toBe(17);
+    expect(last!.asks).toBe(256);
+    expect(last!.decision).toBe("allow"); // 17 cells is not yet a sweep
+
+    const wider = Array.from({ length: 64 }, (_, i) => cellOf(14, 5000 + i * 256, 3000));
+    last = noteAsk("heights", wider, 64, sweeping);
+    expect(last!.cells).toBeGreaterThanOrEqual(64);
+    expect(last!.decision).toBe("refuse");
+  });
+
+  it("counts points rather than requests, so routes are comparable", () => {
+    // One 200-point request costs the service what 200 tile requests cost, so
+    // it counts the same against the volume half of the rule.
+    const cells = Array.from({ length: 70 }, (_, i) => cellOf(14, i * 256, 6450));
+    const one = noteAsk("bulk", cells, 200, sweeping);
+    expect(one.asks).toBe(200);
+    expect(one.decision).toBe("refuse");
   });
 
   it("leaves an allowed client unwatched", () => {
     const p = policy({ crawl: "enforce", crawlCells: 64, allow: ["https://ours.example"] });
     const key = clientKey(request("192.0.2.1"), "https://ours.example");
     let last;
-    for (let i = 0; i < 400; i++) last = noteTile(key, cellOf(14, i * 256, 6450), p);
+    for (let i = 0; i < 400; i++) last = noteAsk(key, [cellOf(14, i * 256, 6450)], 1, p);
     expect(last!.decision).toBe("allow");
   });
 });
@@ -203,9 +234,9 @@ describe("clientsOn", () => {
 
   it("counts the distinct clients seen on one origin", () => {
     for (const ip of ["192.0.2.1", "192.0.2.2", "192.0.2.3"]) {
-      noteTile(`${ip}|http://localhost:1234`, cellOf(14, 1, 1), watching);
+      noteAsk(`${ip}|http://localhost:1234`, [cellOf(14, 1, 1)], 1, watching);
     }
-    noteTile("198.51.100.7|https://example.com", cellOf(14, 1, 1), watching);
+    noteAsk("198.51.100.7|https://example.com", [cellOf(14, 1, 1)], 1, watching);
 
     expect(clientsOn("http://localhost:1234")).toBe(3);
     expect(clientsOn("https://example.com")).toBe(1);
@@ -213,8 +244,8 @@ describe("clientsOn", () => {
   });
 
   it("does not confuse one origin with another that extends it", () => {
-    noteTile("192.0.2.1|http://localhost:1234", cellOf(14, 1, 1), watching);
-    noteTile("192.0.2.1|http://localhost:12340", cellOf(14, 1, 1), watching);
+    noteAsk("192.0.2.1|http://localhost:1234", [cellOf(14, 1, 1)], 1, watching);
+    noteAsk("192.0.2.1|http://localhost:12340", [cellOf(14, 1, 1)], 1, watching);
     expect(clientsOn("http://localhost:1234")).toBe(1);
   });
 });
