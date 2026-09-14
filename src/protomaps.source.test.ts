@@ -16,8 +16,31 @@ function archive(size: number): Uint8Array {
   return bytes;
 }
 
-function expected(bytes: Uint8Array, offset: number, length: number): Uint8Array {
-  return bytes.slice(offset, Math.min(offset + length, bytes.byteLength));
+/**
+ * Assert a response carries exactly the archive's bytes for that range.
+ *
+ * Deliberately not `toEqual` on the two arrays: vitest's deep equality walks
+ * a multi-megabyte range element by element, which is slow enough to blow the
+ * default test timeout on a CI runner. This reports the same failures — first
+ * differing index, and length — in a single pass.
+ */
+function expectRange(
+  data: ArrayBuffer,
+  bytes: Uint8Array,
+  offset: number,
+  length: number,
+): void {
+  const want = bytes.subarray(offset, Math.min(offset + length, bytes.byteLength));
+  const got = new Uint8Array(data);
+  expect(got.byteLength).toBe(want.byteLength);
+  let diff = -1;
+  for (let i = 0; i < want.byteLength; i++) {
+    if (got[i] !== want[i]) {
+      diff = i;
+      break;
+    }
+  }
+  expect(diff).toBe(-1);
 }
 
 function countingBucket(bytes: Uint8Array) {
@@ -44,7 +67,7 @@ describe("R2PmtilesSource", () => {
     const src = new R2PmtilesSource(bucket, "mirror/a.pmtiles");
 
     const res = await src.getBytes(1234, 500);
-    expect(new Uint8Array(res.data)).toEqual(expected(bytes, 1234, 500));
+    expectRange(res.data, bytes, 1234, 500);
   });
 
   it("serves neighbouring tiles out of one read", async () => {
@@ -56,7 +79,7 @@ describe("R2PmtilesSource", () => {
     // sparse-point request produces.
     for (let i = 0; i < 200; i++) {
       const res = await src.getBytes(i * 4096, 3000);
-      expect(new Uint8Array(res.data)).toEqual(expected(bytes, i * 4096, 3000));
+      expectRange(res.data, bytes, i * 4096, 3000);
     }
     expect(get.mock.calls.length).toBe(1);
   });
@@ -70,7 +93,7 @@ describe("R2PmtilesSource", () => {
       Array.from({ length: 32 }, (_, i) => src.getBytes(i * 1024, 512)),
     );
     results.forEach((res, i) => {
-      expect(new Uint8Array(res.data)).toEqual(expected(bytes, i * 1024, 512));
+      expectRange(res.data, bytes, i * 1024, 512);
     });
     expect(get.mock.calls.length).toBe(1);
   });
@@ -82,7 +105,7 @@ describe("R2PmtilesSource", () => {
 
     const offset = MiB - 100;
     const res = await src.getBytes(offset, 400);
-    expect(new Uint8Array(res.data)).toEqual(expected(bytes, offset, 400));
+    expectRange(res.data, bytes, offset, 400);
     expect(get.mock.calls.length).toBe(2);
   });
 
@@ -92,7 +115,7 @@ describe("R2PmtilesSource", () => {
     const src = new R2PmtilesSource(bucket, "mirror/e.pmtiles");
 
     const res = await src.getBytes(0, 2 * MiB);
-    expect(new Uint8Array(res.data)).toEqual(expected(bytes, 0, 2 * MiB));
+    expectRange(res.data, bytes, 0, 2 * MiB);
     expect(get.mock.calls.length).toBe(1);
 
     // It was passed through, so a later small read still has to fetch.
@@ -107,7 +130,7 @@ describe("R2PmtilesSource", () => {
     const src = new R2PmtilesSource(bucket, "mirror/f.pmtiles");
 
     const res = await src.getBytes(size - 100, 4096);
-    expect(new Uint8Array(res.data)).toEqual(expected(bytes, size - 100, 4096));
+    expectRange(res.data, bytes, size - 100, 4096);
     expect(res.data.byteLength).toBe(100);
   });
 
