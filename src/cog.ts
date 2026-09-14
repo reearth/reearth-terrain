@@ -14,10 +14,22 @@ import GeoTIFF, { type GeoTIFFImage } from "geotiff";
 
 import { countRead } from "./r2-reads.js";
 
-interface Slice {
+export interface Slice {
   offset: number;
   length: number;
 }
+
+// Two ranges separated by less than this are fetched as one. A gap costs us
+// the bytes we throw away; a split costs a whole class B operation, and at
+// $0.36/M against R2's per-request overhead the bytes are much the cheaper
+// side of that trade well past a few KiB.
+const COALESCE_GAP = 16 * 1024;
+
+// Per-source budget for remembering bytes we've already paid for. The geoid
+// COG is read at scattered points within the same few tiles, so the same
+// ranges come back over and over; without this every point re-fetches them.
+// 8 MiB leaves plenty of headroom under the Worker's 128 MB limit.
+const SLICE_CACHE_BYTES = 8 * 1024 * 1024;
 
 interface CogSource {
   fetch(slices: Slice[], signal?: AbortSignal): Promise<ArrayBufferLike[]>;
@@ -26,28 +38,96 @@ interface CogSource {
   close(): Promise<void>;
 }
 
+export interface ReadGroup {
+  offset: number;
+  end: number;
+  /** Indices into the original slice array, in no particular order. */
+  members: number[];
+}
+
+/**
+ * Decide which of these byte ranges can share one read. Ranges are grouped
+ * in offset order, and a new group starts only where the gap to the previous
+ * one is wider than `gap` — past that the bytes we'd skip over cost more than
+ * the extra request saves.
+ */
+export function planReads(slices: Slice[], gap: number): ReadGroup[] {
+  const order = slices
+    .map((_, i) => i)
+    .sort((a, b) => slices[a]!.offset - slices[b]!.offset);
+
+  const groups: ReadGroup[] = [];
+  for (const i of order) {
+    const s = slices[i]!;
+    const last = groups[groups.length - 1];
+    if (last && s.offset <= last.end + gap) {
+      last.end = Math.max(last.end, s.offset + s.length);
+      last.members.push(i);
+    } else {
+      groups.push({ offset: s.offset, end: s.offset + s.length, members: [i] });
+    }
+  }
+  return groups;
+}
+
 class R2CogSource implements CogSource {
   #bucket: R2Bucket;
   #key: string;
   #fileSize: number | null = null;
   #sizeProbe: Promise<number | null> | null = null;
+  // Insertion order is eviction order: least recently used first.
+  #cache = new Map<string, ArrayBuffer>();
+  #cacheBytes = 0;
 
   constructor(bucket: R2Bucket, key: string) {
     this.#bucket = bucket;
     this.#key = key;
   }
 
-  // geotiff.js hands this a batch of slices and this issues one R2 read per
-  // slice. Whether the batch is usually one slice or usually twenty — and so
-  // whether coalescing adjacent ranges into a single read would divide the
-  // class B bill or do nothing — is what the tally in src/r2-reads.ts is for.
+  // geotiff.js hands this a batch of slices. Ranges that sit close together
+  // are fetched as one R2 read and handed back out as separate buffers, so a
+  // batch of twenty neighbouring strips costs one class B operation instead
+  // of twenty. The tally in src/r2-reads.ts counts what actually goes out.
   async fetch(slices: Slice[], signal?: AbortSignal): Promise<ArrayBufferLike[]> {
-    return Promise.all(
-      slices.map(async (s) => (await this.fetchSlice(s, signal)).data),
+    if (slices.length <= 1) {
+      return Promise.all(
+        slices.map(async (s) => (await this.fetchSlice(s, signal)).data),
+      );
+    }
+
+    const groups = planReads(slices, COALESCE_GAP);
+    const out: ArrayBufferLike[] = new Array(slices.length);
+    await Promise.all(
+      groups.map(async (g) => {
+        const { data } = await this.fetchSlice(
+          { offset: g.offset, length: g.end - g.offset },
+          signal,
+        );
+        const bytes = new Uint8Array(data);
+        for (const i of g.members) {
+          const s = slices[i]!;
+          const from = s.offset - g.offset;
+          // R2 clamps at EOF, so the group may be short of what we asked for;
+          // hand back whatever of this range actually arrived.
+          const to = Math.min(from + s.length, bytes.byteLength);
+          out[i] = bytes.slice(Math.min(from, bytes.byteLength), to).buffer;
+        }
+      }),
     );
+    return out;
   }
 
   async fetchSlice(slice: Slice, _signal?: AbortSignal) {
+    const cacheKey = `${slice.offset}:${slice.length}`;
+    const hit = this.#cache.get(cacheKey);
+    if (hit) {
+      // Refresh recency so the ranges a burst of points keeps asking for are
+      // the last ones to be evicted.
+      this.#cache.delete(cacheKey);
+      this.#cache.set(cacheKey, hit);
+      return { offset: slice.offset, length: hit.byteLength, data: hit.slice(0) };
+    }
+
     // Every one of these is a billable class B operation, and together they
     // are the largest line on this account's bill.
     countRead(this.#key, slice.length);
@@ -60,7 +140,21 @@ class R2CogSource implements CogSource {
       this.#fileSize = obj.size;
     }
     const buf = await obj.arrayBuffer();
+    this.#remember(cacheKey, buf);
     return { offset: slice.offset, length: buf.byteLength, data: buf };
+  }
+
+  #remember(key: string, buf: ArrayBuffer): void {
+    if (buf.byteLength > SLICE_CACHE_BYTES) return;
+    this.#cache.set(key, buf.slice(0));
+    this.#cacheBytes += buf.byteLength;
+    while (this.#cacheBytes > SLICE_CACHE_BYTES) {
+      const oldest = this.#cache.keys().next();
+      if (oldest.done) break;
+      const evicted = this.#cache.get(oldest.value)!;
+      this.#cache.delete(oldest.value);
+      this.#cacheBytes -= evicted.byteLength;
+    }
   }
 
   get fileSize(): number | null {

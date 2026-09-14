@@ -8,9 +8,14 @@
 //     are missing at the requested zoom retry one zoom coarser, mirroring
 //     the cascade in `sampleGrid`.
 //   - Geoid samples come from a single shared COG that's already memoized
-//     in `openCog`. The grid is small (2.5-arcminute global), so per-point
-//     bilinear interpolation hits geotiff.js's tile cache after the first
-//     few reads.
+//     in `openCog`, and are binned by raster block so each block is read
+//     once. This used to be one read per point, on the assumption that
+//     geotiff.js would cache the strips; it does not, and our source did
+//     not either, so a 200-point request was paying for a few hundred R2
+//     class B operations. `openCog`'s source now remembers the byte ranges
+//     it has already fetched, and the binning here keeps the number of
+//     windows proportional to the area asked about rather than the point
+//     count.
 //
 // Out-of-coverage points get `null` per field. Geoid coverage is global,
 // so `geoid` is essentially always populated; `elevation` and `ellipsoid`
@@ -171,7 +176,7 @@ function bilinear(
  * global) and `openCog` is memoized, so geotiff.js's strip cache covers
  * subsequent calls cheaply. Returns null only when the COG read errors.
  */
-async function sampleGeoidAtPoints(
+export async function sampleGeoidAtPoints(
   bucket: R2Bucket,
   key: string,
   points: SamplePoint[],
@@ -192,50 +197,91 @@ async function sampleGeoidAtPoints(
   // EGM2008 wraps in longitude. We normalize lon into the COG's domain
   // so a point at lon=180 + epsilon still samples the correct strip.
   const lonSpan = width * resX; // typically 360
-  await Promise.all(
-    points.map(async (p, i) => {
-      let lon = p.lon;
-      // Normalize into [originX, originX + lonSpan).
-      const rel = ((lon - originX) % lonSpan + lonSpan) % lonSpan;
-      lon = originX + rel;
-      const px = (lon - originX) / resX;
-      const py = (p.lat - originY) / resY;
-      if (py < 0 || py > height || px < 0 || px > width) return;
-      try {
-        out[i] = await bilinearReadAt(image, px, py, width, height);
-      } catch {
-        out[i] = null;
-      }
-    }),
-  );
+
+  // Bin the points by the block of the raster they land in, so a cluster of
+  // points — which is what a real request looks like, a camera's worth of
+  // terrain rather than points scattered over the globe — is read once
+  // instead of once per point.
+  type Block = { x0: number; y0: number; x1: number; y1: number; members: number[] };
+  const blocks = new Map<string, Block>();
+  const pixels: ({ px: number; py: number } | null)[] = new Array(points.length).fill(null);
+
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i]!;
+    // Normalize into [originX, originX + lonSpan).
+    const rel = (((p.lon - originX) % lonSpan) + lonSpan) % lonSpan;
+    const px = rel / resX;
+    const py = (p.lat - originY) / resY;
+    if (py < 0 || py > height || px < 0 || px > width) continue;
+    pixels[i] = { px, py };
+
+    // The bilinear footprint is the 2x2 starting here, matching the clamping
+    // the per-point read used to do so results don't move at the edges.
+    const x0 = Math.max(0, Math.min(width - 2, Math.floor(px)));
+    const y0 = Math.max(0, Math.min(height - 2, Math.floor(py)));
+    const key = `${x0 >> BLOCK_BITS}/${y0 >> BLOCK_BITS}`;
+    const block = blocks.get(key);
+    if (block) {
+      block.x0 = Math.min(block.x0, x0);
+      block.y0 = Math.min(block.y0, y0);
+      block.x1 = Math.max(block.x1, x0 + 2);
+      block.y1 = Math.max(block.y1, y0 + 2);
+      block.members.push(i);
+    } else {
+      blocks.set(key, { x0, y0, x1: x0 + 2, y1: y0 + 2, members: [i] });
+    }
+  }
+
+  // A block is at most (2^BLOCK_BITS + 1) square, so one window is bounded
+  // no matter how the points fall; the concurrency cap bounds how many of
+  // those windows are alive at once. Both matter: src/cesium.ts records that
+  // a single unbounded window over this raster is ~75 MB and kills the
+  // isolate at the 128 MB limit.
+  await inBatches(Array.from(blocks.values()), MAX_CONCURRENT_BLOCKS, async (block) => {
+    let band: ArrayLike<number>;
+    try {
+      const rasters = await image.readRasters({
+        window: [block.x0, block.y0, block.x1, block.y1],
+        interleave: false,
+        samples: [0],
+      });
+      band = (Array.isArray(rasters) ? rasters[0] : rasters) as ArrayLike<number>;
+    } catch {
+      return; // members stay null, as they did when a per-point read threw
+    }
+    const w = block.x1 - block.x0;
+    for (const i of block.members) {
+      const { px, py } = pixels[i]!;
+      const x0 = Math.max(0, Math.min(width - 2, Math.floor(px)));
+      const y0 = Math.max(0, Math.min(height - 2, Math.floor(py)));
+      const cx = x0 - block.x0;
+      const cy = y0 - block.y0;
+      const dx = px - x0;
+      const dy = py - y0;
+      const v00 = band[cy * w + cx]!;
+      const v10 = band[cy * w + cx + 1]!;
+      const v01 = band[(cy + 1) * w + cx]!;
+      const v11 = band[(cy + 1) * w + cx + 1]!;
+      out[i] = (v00 * (1 - dx) + v10 * dx) * (1 - dy) + (v01 * (1 - dx) + v11 * dx) * dy;
+    }
+  });
   return out;
 }
 
-async function bilinearReadAt(
-  image: import("geotiff").GeoTIFFImage,
-  px: number,
-  py: number,
-  width: number,
-  height: number,
-): Promise<number> {
-  const x0 = Math.max(0, Math.min(width - 2, Math.floor(px)));
-  const y0 = Math.max(0, Math.min(height - 2, Math.floor(py)));
-  const rasters = await image.readRasters({
-    window: [x0, y0, x0 + 2, y0 + 2],
-    width: 2,
-    height: 2,
-    interleave: false,
-    samples: [0],
-  });
-  const band = Array.isArray(rasters) ? rasters[0] : rasters;
-  const arr = band as ArrayLike<number>;
-  const dx = px - x0;
-  const dy = py - y0;
-  const v00 = arr[0]!;
-  const v10 = arr[1]!;
-  const v01 = arr[2]!;
-  const v11 = arr[3]!;
-  return (v00 * (1 - dx) + v10 * dx) * (1 - dy) + (v01 * (1 - dx) + v11 * dx) * dy;
+/** Points whose 2x2 footprints share a 256x256 cell are read as one window. */
+const BLOCK_BITS = 8;
+
+/** How many block windows may be in memory at once. */
+const MAX_CONCURRENT_BLOCKS = 8;
+
+async function inBatches<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  for (let i = 0; i < items.length; i += limit) {
+    await Promise.all(items.slice(i, i + limit).map(fn));
+  }
 }
 
 /**
