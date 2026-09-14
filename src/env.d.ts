@@ -43,4 +43,19 @@ interface Env {
    *   wrangler secret put OKIBI_ACCOUNT_ID
    */
   OKIBI_ACCOUNT_ID?: string;
+
+  /**
+   * Holds the serving policy under the key `policy`. Kept out of
+   * `wrangler.toml` for the same reason as the account id, only more so: an
+   * exception written for one client is an address. See `src/policy.ts`.
+   */
+  CONFIG?: KVNamespace;
+
+  /**
+   * Workers' rate limiting binding, defined in `wrangler.toml`. Absent under
+   * `wrangler dev`, where nothing is limited.
+   *
+   * See `src/rate-limit.ts`.
+   */
+  TILE_RATE_LIMIT?: { limit(options: { key: string }): Promise<{ success: boolean }> };
 }

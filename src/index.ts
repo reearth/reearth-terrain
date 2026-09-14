@@ -21,6 +21,16 @@ import {
 } from "./tilesets.js";
 import { cachedTile, bodyEtag, matchesIfNoneMatch } from "./cache.js";
 import { demandFor } from "./okibi.js";
+import { siteOf } from "@reearth/okibi/writer";
+import { loadPolicy } from "./policy.js";
+import {
+  cellOf,
+  checkRateLimit,
+  clientKey,
+  clientsOn,
+  noteTile,
+  refusal,
+} from "./rate-limit.js";
 import { meshCacheVersion } from "./cache-patches.js";
 import { runCleanup } from "./cleanup.js";
 import { counting, reportReads } from "./r2-reads.js";
@@ -205,9 +215,85 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+/**
+ * The z8 cell a request is asking about, or null when the path is not one of
+ * the generated routes. Tile routes end in `/{z}/{x}/{y}` with or without an
+ * extension; `/heights.json` carries coordinates instead, and its first point
+ * places it well enough — a sampler sweeping the globe moves between cells
+ * exactly as a tile sweep does.
+ */
+function cellOfRequest(url: URL): string | null {
+  const tile = /\/(\d+)\/(\d+)\/(\d+)(?:\.[a-z0-9]+)?$/.exec(url.pathname);
+  if (tile) return cellOf(Number(tile[1]), Number(tile[2]), Number(tile[3]));
+
+  if (url.pathname !== "/heights.json") return null;
+  const first = (url.searchParams.get("points") ?? "").split(";", 1)[0] ?? "";
+  const [lonRaw, latRaw] = first.split(",");
+  const lon = Number(lonRaw);
+  const lat = Number(latRaw);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  const n = 1 << 8;
+  const clamped = Math.max(-85.0511287798066, Math.min(85.0511287798066, lat));
+  const rad = (clamped * Math.PI) / 180;
+  const x = Math.floor(((lon + 180) / 360) * n);
+  const y = Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * n);
+  return cellOf(8, ((x % n) + n) % n, Math.max(0, Math.min(n - 1, y)));
+}
+
+/**
+ * Decide whether to serve this request at all, before any of it is paid for.
+ *
+ * Returns a refusal to send back, or null to carry on. Under "observe" it
+ * always returns null and only writes down what it would have done, which is
+ * how this is meant to run until there is a day of evidence about who it
+ * would actually catch. See src/rate-limit.ts and src/policy.ts.
+ */
+async function guard(req: Request, url: URL, env: Env): Promise<Response | null> {
+  const cell = cellOfRequest(url);
+  if (!cell) return null; // not a generated route; nothing here is expensive
+
+  const policy = await loadPolicy(env);
+  if (policy.rateLimit === "off" && policy.crawl === "off") return null;
+
+  const origin = siteOf(req);
+  const key = clientKey(req, origin);
+
+  const rate = await checkRateLimit(key, origin, policy, env);
+  if (rate !== "allow") {
+    console.log("limit", {
+      rule: "rate",
+      decision: rate,
+      origin,
+      clients: clientsOn(origin),
+      path: url.pathname,
+    });
+    if (rate === "refuse") return refusal("rate");
+  }
+
+  const sweep = noteTile(key, cell, policy);
+  if (sweep.decision !== "allow") {
+    console.log("limit", {
+      rule: "sweep",
+      decision: sweep.decision,
+      origin,
+      // A floor, not a total: only what this isolate has seen. It says
+      // whether an origin is one client or a crowd, which decides whether a
+      // limit is the right tool at all. See clientsOn.
+      clients: clientsOn(origin),
+      cells: sweep.cells,
+      requests: sweep.requests,
+    });
+    if (sweep.decision === "refuse") return refusal("sweep");
+  }
+  return null;
+}
+
 async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(req.url);
   try {
+      const refused = await guard(req, url, env);
+      if (refused) return refused;
+
       // Landing-page content negotiation. `run_worker_first` in
       // wrangler.toml routes `/` and `/index.html` through the worker
       // before the asset router; when an AI client (or `curl -H "Accept:

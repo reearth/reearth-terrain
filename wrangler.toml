@@ -79,6 +79,27 @@ crons = ["0 3 * * *"]
 binding = "R2"
 bucket_name = "reearth-terrain"
 
+# Who gets served, and how much. Deliberately not in this file: the
+# repository is public, and an exception written for one client is an
+# address. It also changes without a deploy, which is what a policy meant
+# to be tuned after watching it run actually needs. `src/policy.ts` has the
+# document's shape; an empty namespace refuses nobody.
+[[kv_namespaces]]
+binding = "CONFIG"
+id = "d582464478ab4e1e8eab87895fba169e"
+
+# The volume ceiling. A number, not an address, so it belongs here where it
+# is reviewed alongside the code that applies it. 3000 a minute is 50 a
+# second: the two runaway instances measured on 2026-09-14 were doing about
+# 90 each, and the 155 other local dev servers together were doing 20.
+#
+# Counting is per Cloudflare location and deliberately approximate — see the
+# note on `LimiterEnv`. `period` may only be 10 or 60.
+[[ratelimits]]
+name = "TILE_RATE_LIMIT"
+namespace_id = "1001"
+simple = { limit = 3000, period = 60 }
+
 [vars]
 ENVIRONMENT = "production"
 # Skip the two-layer tile cache entirely when "1"/"true". `.dev.vars`
