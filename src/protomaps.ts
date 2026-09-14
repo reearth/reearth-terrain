@@ -79,15 +79,37 @@ function formatUtcDate(d: Date): string {
 }
 
 /**
- * PMTiles `Source` backed by an R2 object. Issues `R2Bucket.get` with a
- * `range` option per `getBytes` call. Used when `PROTOMAPS_SOURCE=mirror`
- * — the mirror worker has already copied the archive into R2 under
- * `${MIRROR_PREFIX}/{date}.pmtiles`.
+ * How much of the archive one R2 read pulls in. PMTiles lays tiles out in
+ * Hilbert order, so tiles that are near each other on the map are near each
+ * other in the file: a request for one tile is a good predictor of the next.
+ * R2 bills class B per operation and does not bill egress here, so reading a
+ * megabyte to answer a 4 KB question costs nothing extra and saves every
+ * neighbouring read that follows.
+ */
+const CHUNK_BYTES = 1024 * 1024;
+
+/** Per-archive budget for chunks held in the isolate. */
+const CHUNK_CACHE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * PMTiles `Source` backed by an R2 object. Used when
+ * `PROTOMAPS_SOURCE=mirror` — the mirror worker has already copied the
+ * archive into R2 under `${MIRROR_PREFIX}/{date}.pmtiles`.
+ *
+ * Reads are served out of aligned chunks rather than issued one per
+ * `getBytes` call. A sparse-point request touches a few hundred tiles that
+ * are spatially adjacent and therefore land in a handful of chunks; without
+ * this each of them was its own billable class B operation.
  */
 export class R2PmtilesSource implements Source {
   #bucket: R2Bucket;
   #key: string;
   #identity: string;
+  #etag: string | undefined;
+  // Insertion order is eviction order: least recently used first.
+  #chunks = new Map<number, Uint8Array>();
+  #chunkBytes = 0;
+  #inflight = new Map<number, Promise<Uint8Array>>();
 
   constructor(bucket: R2Bucket, key: string) {
     this.#bucket = bucket;
@@ -103,16 +125,75 @@ export class R2PmtilesSource implements Source {
   }
 
   async getBytes(offset: number, length: number): Promise<RangeResponse> {
+    // A read larger than a chunk would evict most of the cache to hold one
+    // answer nobody is going to ask for again. Pass it straight through.
+    if (length > CHUNK_BYTES) {
+      const data = await this.#read(offset, length);
+      return { data: data.buffer as ArrayBuffer, etag: this.#etag };
+    }
+
+    const first = Math.floor(offset / CHUNK_BYTES);
+    const last = Math.floor((offset + length - 1) / CHUNK_BYTES);
+    const parts = await Promise.all(
+      Array.from({ length: last - first + 1 }, (_, i) => this.#chunk(first + i)),
+    );
+
+    const out = new Uint8Array(length);
+    let written = 0;
+    for (const [i, part] of parts.entries()) {
+      const chunkStart = (first + i) * CHUNK_BYTES;
+      const from = Math.max(0, offset - chunkStart);
+      const to = Math.min(part.byteLength, offset + length - chunkStart);
+      if (to <= from) continue;
+      out.set(part.subarray(from, to), written);
+      written += to - from;
+    }
+    // The archive can end mid-chunk; hand back only what actually exists.
+    const data = written === length ? out.buffer : out.buffer.slice(0, written);
+    return { data, etag: this.#etag };
+  }
+
+  #chunk(index: number): Promise<Uint8Array> {
+    const cached = this.#chunks.get(index);
+    if (cached) {
+      this.#chunks.delete(index);
+      this.#chunks.set(index, cached);
+      return Promise.resolve(cached);
+    }
+
+    // Sparse-point requests fan out over tiles in parallel, so without this
+    // the same chunk would be bought several times over concurrently.
+    const existing = this.#inflight.get(index);
+    if (existing) return existing;
+
+    const promise = this.#read(index * CHUNK_BYTES, CHUNK_BYTES)
+      .then((bytes) => {
+        this.#remember(index, bytes);
+        return bytes;
+      })
+      .finally(() => this.#inflight.delete(index));
+    this.#inflight.set(index, promise);
+    return promise;
+  }
+
+  async #read(offset: number, length: number): Promise<Uint8Array> {
     countRead(this.#key, length);
-    const obj = await this.#bucket.get(this.#key, {
-      range: { offset, length },
-    });
+    const obj = await this.#bucket.get(this.#key, { range: { offset, length } });
     if (!obj) throw new Error(`pmtiles archive not found in R2: ${this.#key}`);
-    const data = await obj.arrayBuffer();
-    return {
-      data,
-      etag: obj.httpEtag,
-    };
+    this.#etag ??= obj.httpEtag;
+    return new Uint8Array(await obj.arrayBuffer());
+  }
+
+  #remember(index: number, bytes: Uint8Array): void {
+    this.#chunks.set(index, bytes);
+    this.#chunkBytes += bytes.byteLength;
+    while (this.#chunkBytes > CHUNK_CACHE_BYTES) {
+      const oldest = this.#chunks.keys().next();
+      if (oldest.done) break;
+      const evicted = this.#chunks.get(oldest.value)!;
+      this.#chunks.delete(oldest.value);
+      this.#chunkBytes -= evicted.byteLength;
+    }
   }
 }
 
