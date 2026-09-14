@@ -11,6 +11,7 @@
 // pixel work in the WASM core.
 
 import { decode_terrarium_webp, DecodedTile } from "./wasm/reearth-terrain-wasm/reearth_terrain_wasm.js";
+import { shared } from "./single-flight.js";
 
 export interface DemTile {
   /** Tile pixel width (Mapterhorn ships 512px tiles). */
@@ -54,6 +55,9 @@ export interface MapterhornOptions {
  * also resident. Null (404) entries are nearly free and live in the same map.
  */
 const DEM_TILE_LRU_CAPACITY = 32;
+// A tile is an upstream fetch plus a WASM decode, so it gets a longer leash
+// than a single read before another caller decides its owner is gone.
+const TILE_TIMEOUT_MS = 20_000;
 
 export class MapterhornSource implements DemSource {
   readonly name = "mapterhorn";
@@ -93,25 +97,25 @@ export class MapterhornSource implements DemSource {
       return Promise.resolve(hit);
     }
 
-    const existing = this.#inflight.get(key);
-    if (existing) return existing;
-
-    const promise = this.#fetchAndDecode(z, x, y).then((tile) => {
-      this.#cache.set(key, tile);
-      if (this.#cache.size > DEM_TILE_LRU_CAPACITY) {
-        // Evict the oldest (first inserted / least recently used).
-        const oldest = this.#cache.keys().next().value;
-        if (oldest !== undefined) this.#cache.delete(oldest);
-      }
-      return tile;
-    });
-    this.#inflight.set(key, promise);
-    // `.finally` returns a new promise; if it rejects, awaiting only the
-    // original `promise` (as callers do) leaves this branch dangling, which
-    // surfaces as an unhandled rejection on failure paths. `.catch(()=>{})`
-    // detaches it cleanly.
-    promise.finally(() => this.#inflight.delete(key)).catch(() => {});
-    return promise;
+    // This source lives as long as the isolate, so an entry left pending by a
+    // request that went away would never settle and would hang every later
+    // reader of the tile. `shared` gives up on a stale entry instead of
+    // waiting on it — see src/single-flight.ts.
+    return shared(
+      this.#inflight,
+      key,
+      async () => {
+        const tile = await this.#fetchAndDecode(z, x, y);
+        this.#cache.set(key, tile);
+        if (this.#cache.size > DEM_TILE_LRU_CAPACITY) {
+          // Evict the oldest (first inserted / least recently used).
+          const oldest = this.#cache.keys().next().value;
+          if (oldest !== undefined) this.#cache.delete(oldest);
+        }
+        return tile;
+      },
+      { timeoutMs: TILE_TIMEOUT_MS, keepResolved: false },
+    );
   }
 
   /**

@@ -13,6 +13,7 @@
 import GeoTIFF, { type GeoTIFFImage } from "geotiff";
 
 import { countRead } from "./r2-reads.js";
+import { OPEN_TIMEOUT_MS, READ_TIMEOUT_MS, shared } from "./single-flight.js";
 
 export interface Slice {
   offset: number;
@@ -131,22 +132,19 @@ class R2CogSource implements CogSource {
 
     // Blocks are read in parallel and neighbouring blocks share the tiles on
     // their common edge, so without this the same range would be bought
-    // several times over at once.
-    const existing = this.#inflight.get(cacheKey);
-    if (existing) {
-      const buf = await existing;
-      return { offset: slice.offset, length: buf.byteLength, data: buf.slice(0) };
-    }
-
-    const read = this.#read(slice)
-      .then((buf) => {
-        this.#remember(cacheKey, buf);
-        return buf;
-      })
-      .finally(() => this.#inflight.delete(cacheKey));
-    this.#inflight.set(cacheKey, read);
-    const buf = await read;
-    return { offset: slice.offset, length: buf.byteLength, data: buf };
+    // several times over at once. This source outlives the request that built
+    // it, so the sharing goes through `shared` — see src/single-flight.ts.
+    const buf = await shared(
+      this.#inflight,
+      cacheKey,
+      async () => {
+        const bytes = await this.#read(slice);
+        this.#remember(cacheKey, bytes);
+        return bytes;
+      },
+      { timeoutMs: READ_TIMEOUT_MS, keepResolved: false },
+    );
+    return { offset: slice.offset, length: buf.byteLength, data: buf.slice(0) };
   }
 
   async #read(slice: Slice): Promise<ArrayBuffer> {
@@ -216,6 +214,11 @@ export interface OpenedCog {
 // cache. We store the promise itself for single-flight: concurrent first
 // callers all await the same `fromSource`/`getImage` pipeline.
 //
+// It goes through `shared` because a promise here outlives the request that
+// created it, and one left pending by a request that went away would never
+// settle — poisoning this key for the rest of the isolate's life. See
+// src/single-flight.ts.
+//
 // Key is the R2 object key; this worker only binds one bucket. If that ever
 // changes, include the bucket identity in the key.
 const openedCogs = new Map<string, Promise<OpenedCog>>();
@@ -226,18 +229,18 @@ export function openCog(
   key: string,
   opts: OpenCogOptions = {},
 ): Promise<OpenedCog> {
-  const cached = openedCogs.get(key);
-  if (cached) return cached;
-
-  const promise = (async () => {
-    const source = new R2CogSource(bucket, key);
-    if (opts.probeSize) await source.probeSize();
-    const tiff = await GeoTIFF.fromSource(source as unknown as Parameters<typeof GeoTIFF.fromSource>[0]);
-    const image = await tiff.getImage();
-    return { tiff, image };
-  })();
-
-  openedCogs.set(key, promise);
-  promise.catch(() => openedCogs.delete(key));
-  return promise;
+  return shared(
+    openedCogs,
+    key,
+    async () => {
+      const source = new R2CogSource(bucket, key);
+      if (opts.probeSize) await source.probeSize();
+      const tiff = await GeoTIFF.fromSource(
+        source as unknown as Parameters<typeof GeoTIFF.fromSource>[0],
+      );
+      const image = await tiff.getImage();
+      return { tiff, image };
+    },
+    { timeoutMs: OPEN_TIMEOUT_MS },
+  );
 }

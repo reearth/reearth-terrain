@@ -27,6 +27,7 @@ import { R2PmtilesSource } from "./protomaps.js";
 import { decode_terrarium_webp, DecodedTile } from "./wasm/reearth-terrain-wasm/reearth_terrain_wasm.js";
 import type { DemSource, DemTile } from "./dem.js";
 import { countRead } from "./r2-reads.js";
+import { READ_TIMEOUT_MS, shared } from "./single-flight.js";
 
 export interface MirroredMapterhornOptions {
   /** R2 prefix the mirror worker writes under. Defaults to `mirror/mapterhorn`. */
@@ -56,6 +57,9 @@ const POINTER_TTL_MS = 60 * 60 * 1000;
 // 32 entries × 1 MiB (512×512 Float32) ≈ 32 MiB — same shape as the
 // upstream source's LRU; see the rationale comment on `MapterhornSource`.
 const DEM_TILE_LRU_CAPACITY = 32;
+// A tile is several R2 reads plus a WASM decode, so it gets a longer leash
+// than a single read before another caller decides its owner is gone.
+const TILE_TIMEOUT_MS = 20_000;
 
 export class MirroredMapterhornSource implements DemSource {
   readonly name = "mapterhorn-mirror";
@@ -94,20 +98,24 @@ export class MirroredMapterhornSource implements DemSource {
       return Promise.resolve(hit);
     }
 
-    const existing = this.#inflight.get(key);
-    if (existing) return existing;
-
-    const promise = this.#fetchAndDecode(z, x, y).then((tile) => {
-      this.#cache.set(key, tile);
-      if (this.#cache.size > DEM_TILE_LRU_CAPACITY) {
-        const oldest = this.#cache.keys().next().value;
-        if (oldest !== undefined) this.#cache.delete(oldest);
-      }
-      return tile;
-    });
-    this.#inflight.set(key, promise);
-    promise.finally(() => this.#inflight.delete(key)).catch(() => {});
-    return promise;
+    // This source lives as long as the isolate, so an entry left pending by a
+    // request that went away would never settle, and every later reader of
+    // this tile would wait on it forever. `shared` gives up on a stale entry
+    // and starts again — see src/single-flight.ts.
+    return shared(
+      this.#inflight,
+      key,
+      async () => {
+        const tile = await this.#fetchAndDecode(z, x, y);
+        this.#cache.set(key, tile);
+        if (this.#cache.size > DEM_TILE_LRU_CAPACITY) {
+          const oldest = this.#cache.keys().next().value;
+          if (oldest !== undefined) this.#cache.delete(oldest);
+        }
+        return tile;
+      },
+      { timeoutMs: TILE_TIMEOUT_MS, keepResolved: false },
+    );
   }
 
   // Intentionally no `freshness` member. Mirror snapshots are
@@ -143,18 +151,25 @@ export class MirroredMapterhornSource implements DemSource {
   }
 
   async #pointerFor(archive: string): Promise<PerArchivePointer | null> {
-    const existing = this.#pointers.get(archive);
-    if (existing) {
-      const entry = await existing;
-      if (entry.expires > Date.now()) return entry.value;
-      this.#pointers.delete(archive);
-    }
-    const p = this.#loadPointer(archive);
-    this.#pointers.set(archive, p);
-    // Detach to avoid an unhandled rejection if the load fails — the
-    // awaiting caller still observes the error directly.
-    p.catch(() => this.#pointers.delete(archive));
-    return (await p).value;
+    // The entry is a promise that outlives the request that made it, so it
+    // goes through `shared` for the same reason the tile map does; expiry is
+    // handled by dropping the entry and asking again.
+    const entry = await shared(
+      this.#pointers,
+      archive,
+      () => this.#loadPointer(archive),
+      { timeoutMs: READ_TIMEOUT_MS },
+    );
+    if (entry.expires > Date.now()) return entry.value;
+
+    this.#pointers.delete(archive);
+    const fresh = await shared(
+      this.#pointers,
+      archive,
+      () => this.#loadPointer(archive),
+      { timeoutMs: READ_TIMEOUT_MS },
+    );
+    return fresh.value;
   }
 
   async #loadPointer(archive: string): Promise<PointerCacheEntry> {

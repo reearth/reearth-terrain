@@ -24,6 +24,7 @@
 import type { RangeResponse, Source } from "pmtiles";
 import { FetchSource } from "pmtiles";
 import { countRead } from "./r2-reads.js";
+import { READ_TIMEOUT_MS, shared } from "./single-flight.js";
 
 const UPSTREAM_BASE = "https://build.protomaps.com";
 const MAX_PROBE_DAYS = 7;
@@ -182,18 +183,19 @@ export class R2PmtilesSource implements Source {
     }
 
     // Sparse-point requests fan out over tiles in parallel, so without this
-    // the same chunk would be bought several times over concurrently.
-    const existing = chunkInflight.get(id);
-    if (existing) return existing;
-
-    const promise = this.#read(index * CHUNK_BYTES, CHUNK_BYTES)
-      .then((bytes) => {
+    // the same chunk would be bought several times over concurrently. The map
+    // is module-scoped and outlives the request, so the sharing goes through
+    // `shared` — see src/single-flight.ts.
+    return shared(
+      chunkInflight,
+      id,
+      async () => {
+        const bytes = await this.#read(index * CHUNK_BYTES, CHUNK_BYTES);
         remember(id, bytes);
         return bytes;
-      })
-      .finally(() => chunkInflight.delete(id));
-    chunkInflight.set(id, promise);
-    return promise;
+      },
+      { timeoutMs: READ_TIMEOUT_MS, keepResolved: false },
+    );
   }
 
   async #read(offset: number, length: number): Promise<Uint8Array> {
