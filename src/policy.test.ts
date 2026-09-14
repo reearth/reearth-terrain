@@ -27,7 +27,7 @@ describe("loadPolicy", () => {
       origins: ["http://localhost", "http://127.0.0.1"],
       crawl: "observe",
       crawlCells: 96,
-      allow: ["1.2.3.4"],
+      allow: ["192.0.2.1"],
       deny: [],
     }));
     expect(await loadPolicy(env)).toEqual({
@@ -35,7 +35,7 @@ describe("loadPolicy", () => {
       origins: ["http://localhost", "http://127.0.0.1"],
       crawl: "observe",
       crawlCells: 96,
-      allow: ["1.2.3.4"],
+      allow: ["192.0.2.1"],
       deny: [],
     });
   });

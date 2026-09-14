@@ -39,8 +39,9 @@ export interface LimiterEnv {
  * How the client is counted: its address and the site it says it is on.
  *
  * Both parts matter. Address alone would put a university behind one NAT on a
- * single budget; origin alone would put every `http://localhost:4173` in the
- * world on one, and there are 155 of those, nearly all of them innocent.
+ * single budget; origin alone would put every dev server in the world that
+ * happens to use the same default port on one, and there are over a hundred
+ * of those, nearly all of them innocent.
  */
 export function clientKey(request: Request, origin: string): string {
   return `${request.headers.get("CF-Connecting-IP") ?? ""}|${origin}`;
@@ -163,11 +164,12 @@ export function noteTile(
 /**
  * How many distinct clients this isolate has seen on one origin lately.
  *
- * Two origins account for most of Terrain's demand, and what to do about them
- * depends entirely on whether each is one runaway instance or a crowd of
- * people running the same application — a limit meets the first and does
- * nothing about the second. `http://127.0.0.1:42003` is a port an operating
- * system handed out, so a crowd is perfectly possible.
+ * A couple of origins account for most of Terrain's demand, and what to do
+ * about them depends entirely on whether each is one runaway instance or a
+ * crowd of people running the same application — a limit meets the first and
+ * does nothing about the second. The origins in question are dev servers on
+ * automatically assigned ports, so a crowd sharing one string is perfectly
+ * possible.
  *
  * A count answers that without putting an identifier in the log. It reads
  * only what this isolate holds, so it is a floor, not a total: seeing thirty
@@ -194,41 +196,46 @@ const SOURCES = [
   "  Geoid  EGM2008 2.5-arcminute grid     (public domain)",
 ].join("\n");
 
-const ISSUES = "https://github.com/reearth/reearth-terrain/issues";
+const TERMS =
+  "This service is provided as-is, with no availability guarantee and no\nsupport.";
 
 /**
- * Say no, and say what to do instead.
+ * Say no, and say where the data is.
  *
- * Someone collecting the whole grid wants the data, not this service: the
- * source is one download, already assembled, and theirs to keep. Tiles here
- * are built one at a time when asked for, and a sweep leaves behind a cache
- * nobody will ever read. Telling them that is more likely to end the traffic
- * than a bare 429, and it is the more useful answer besides.
+ * The pointer to the source is the whole value of this response. Somebody
+ * collecting the grid wants the data, not this service, and the source is one
+ * download, already assembled, and theirs to keep — so the answer that ends
+ * the traffic and the answer that helps them are the same answer.
+ *
+ * What it does not do is invite a negotiation. There is no undertaking here
+ * to keep serving anyone, and pretending otherwise by asking people to come
+ * and argue would be the dishonest kind of politeness.
  */
 export function refusal(reason: "rate" | "sweep"): Response {
   const body =
     reason === "sweep"
-      ? `This looks like a systematic sweep of the tile grid.
+      ? `Refused: this client is walking the tile grid.
 
-Every tile here is built when somebody asks for it, so walking the grid
-is slow for you and expensive for us. If you want the data, take the
-source instead — it downloads faster and it is yours to keep:
+Every tile here is built at the moment somebody asks for it. Collecting
+the grid one tile at a time is slow for you and expensive to serve, and
+it is not what this service is for.
+
+The underlying data is published and free to download:
 
 ${SOURCES}
 
-If this was not a sweep, we would rather fix our detection than get in
-your way: ${ISSUES}
+${TERMS}
 `
-      : `Too many requests from this client.
+      : `Refused: too many requests from this client.
 
-This service is free and we would like to keep it that way, which means
-no one client can take an unbounded share of it. If you are running a
-map, an ordinary browser cache is usually enough to stay well under the
-limit. If you need the data in bulk, take the source instead:
+No single client gets an unbounded share of this service. A map with an
+ordinary browser cache stays well under the limit.
+
+If you want the data in bulk, it is published and free to download:
 
 ${SOURCES}
 
-If this limit is in your way, tell us what you are building: ${ISSUES}
+${TERMS}
 `;
 
   return new Response(body, {

@@ -32,16 +32,16 @@ const limiter = (success: boolean) => ({
 describe("clientKey", () => {
   it("counts an address and an origin together", () => {
     // Address alone would put a university behind one NAT on a single
-    // budget; origin alone would put every localhost:4173 in the world on
-    // one, and there are 155 of those.
-    expect(clientKey(request("1.2.3.4"), "http://localhost:4173")).toBe(
-      "1.2.3.4|http://localhost:4173",
+    // budget; origin alone would put every dev server in the world sharing a
+    // default port on one, and there are over a hundred of those.
+    expect(clientKey(request("192.0.2.1"), "http://localhost:1234")).toBe(
+      "192.0.2.1|http://localhost:1234",
     );
-    expect(clientKey(request("1.2.3.4"), "http://localhost:4173")).not.toBe(
-      clientKey(request("1.2.3.5"), "http://localhost:4173"),
+    expect(clientKey(request("192.0.2.1"), "http://localhost:1234")).not.toBe(
+      clientKey(request("192.0.2.2"), "http://localhost:1234"),
     );
-    expect(clientKey(request("1.2.3.4"), "http://localhost:4173")).not.toBe(
-      clientKey(request("1.2.3.4"), "http://localhost:5173"),
+    expect(clientKey(request("192.0.2.1"), "http://localhost:1234")).not.toBe(
+      clientKey(request("192.0.2.1"), "http://localhost:5678"),
     );
   });
 });
@@ -49,58 +49,58 @@ describe("clientKey", () => {
 describe("checkRateLimit", () => {
   it("serves everyone when the policy is off", async () => {
     const env = limiter(false);
-    expect(await checkRateLimit("k", "http://localhost:4173", policy(), env)).toBe("allow");
+    expect(await checkRateLimit("k", "http://localhost:1234", policy(), env)).toBe("allow");
     expect(env.TILE_RATE_LIMIT.limit).not.toHaveBeenCalled();
   });
 
   it("leaves origins outside the list alone", async () => {
     const env = limiter(false);
     const p = policy({ rateLimit: "enforce", origins: ["http://localhost"] });
-    expect(await checkRateLimit("k", "https://3dbag.nl", p, env)).toBe("allow");
+    expect(await checkRateLimit("k", "https://example.com", p, env)).toBe("allow");
     expect(env.TILE_RATE_LIMIT.limit).not.toHaveBeenCalled();
   });
 
   it("refuses an origin over its share when enforcing", async () => {
     const p = policy({ rateLimit: "enforce", origins: ["http://localhost"] });
-    expect(await checkRateLimit("k", "http://localhost:4173", p, limiter(false))).toBe(
+    expect(await checkRateLimit("k", "http://localhost:1234", p, limiter(false))).toBe(
       "refuse",
     );
   });
 
   it("only writes it down when observing", async () => {
     const p = policy({ rateLimit: "observe", origins: ["http://localhost"] });
-    expect(await checkRateLimit("k", "http://localhost:4173", p, limiter(false))).toBe(
+    expect(await checkRateLimit("k", "http://localhost:1234", p, limiter(false))).toBe(
       "observed",
     );
   });
 
   it("serves a client still inside its share", async () => {
     const p = policy({ rateLimit: "enforce", origins: ["http://localhost"] });
-    expect(await checkRateLimit("k", "http://localhost:4173", p, limiter(true))).toBe(
+    expect(await checkRateLimit("k", "http://localhost:1234", p, limiter(true))).toBe(
       "allow",
     );
   });
 
   it("serves everyone when the binding is missing, as under wrangler dev", async () => {
     const p = policy({ rateLimit: "enforce", origins: ["http://localhost"] });
-    expect(await checkRateLimit("k", "http://localhost:4173", p, {})).toBe("allow");
+    expect(await checkRateLimit("k", "http://localhost:1234", p, {})).toBe("allow");
   });
 
   it("honours an allow entry ahead of the limit", async () => {
     const p = policy({
       rateLimit: "enforce",
       origins: ["http://localhost"],
-      allow: ["1.2.3.4"],
+      allow: ["192.0.2.1"],
     });
-    const key = clientKey(request("1.2.3.4"), "http://localhost:4173");
-    expect(await checkRateLimit(key, "http://localhost:4173", p, limiter(false))).toBe(
+    const key = clientKey(request("192.0.2.1"), "http://localhost:1234");
+    expect(await checkRateLimit(key, "http://localhost:1234", p, limiter(false))).toBe(
       "allow",
     );
   });
 
   it("refuses a deny entry even when the policy is otherwise off", async () => {
     const p = policy({ deny: ["https://example.invalid"] });
-    const key = clientKey(request("1.2.3.4"), "https://example.invalid");
+    const key = clientKey(request("192.0.2.1"), "https://example.invalid");
     expect(await checkRateLimit(key, "https://example.invalid", p, limiter(true))).toBe(
       "refuse",
     );
@@ -191,7 +191,7 @@ describe("noteTile", () => {
 
   it("leaves an allowed client unwatched", () => {
     const p = policy({ crawl: "enforce", crawlCells: 64, allow: ["https://ours.example"] });
-    const key = clientKey(request("1.2.3.4"), "https://ours.example");
+    const key = clientKey(request("192.0.2.1"), "https://ours.example");
     let last;
     for (let i = 0; i < 400; i++) last = noteTile(key, cellOf(14, i * 256, 6450), p);
     expect(last!.decision).toBe("allow");
@@ -202,20 +202,20 @@ describe("clientsOn", () => {
   const watching = policy({ crawl: "observe", crawlCells: 64 });
 
   it("counts the distinct clients seen on one origin", () => {
-    for (const ip of ["1.1.1.1", "2.2.2.2", "3.3.3.3"]) {
-      noteTile(`${ip}|http://127.0.0.1:42003`, cellOf(14, 1, 1), watching);
+    for (const ip of ["192.0.2.1", "192.0.2.2", "192.0.2.3"]) {
+      noteTile(`${ip}|http://localhost:1234`, cellOf(14, 1, 1), watching);
     }
-    noteTile("9.9.9.9|https://3dbag.nl", cellOf(14, 1, 1), watching);
+    noteTile("198.51.100.7|https://example.com", cellOf(14, 1, 1), watching);
 
-    expect(clientsOn("http://127.0.0.1:42003")).toBe(3);
-    expect(clientsOn("https://3dbag.nl")).toBe(1);
+    expect(clientsOn("http://localhost:1234")).toBe(3);
+    expect(clientsOn("https://example.com")).toBe(1);
     expect(clientsOn("https://nobody.example")).toBe(0);
   });
 
   it("does not confuse one origin with another that extends it", () => {
-    noteTile("1.1.1.1|http://localhost:4173", cellOf(14, 1, 1), watching);
-    noteTile("1.1.1.1|http://localhost:41730", cellOf(14, 1, 1), watching);
-    expect(clientsOn("http://localhost:4173")).toBe(1);
+    noteTile("192.0.2.1|http://localhost:1234", cellOf(14, 1, 1), watching);
+    noteTile("192.0.2.1|http://localhost:12340", cellOf(14, 1, 1), watching);
+    expect(clientsOn("http://localhost:1234")).toBe(1);
   });
 });
 
@@ -227,12 +227,21 @@ describe("refusal", () => {
     const body = await res.text();
     expect(body).toContain("tiles.mapterhorn.com");
     expect(body).toContain("EGM2008");
-    expect(body).toContain("github.com/reearth/reearth-terrain/issues");
   });
 
   it("explains the volume limit differently from the sweep", async () => {
-    expect(await refusal("rate").text()).toContain("Too many requests");
-    expect(await refusal("sweep").text()).toContain("systematic sweep");
+    expect(await refusal("rate").text()).toContain("too many requests");
+    expect(await refusal("sweep").text()).toContain("walking the tile grid");
+  });
+
+  it("says what the service does and does not undertake", async () => {
+    for (const reason of ["rate", "sweep"] as const) {
+      const body = await refusal(reason).text();
+      expect(body).toContain("no availability guarantee");
+      // No invitation to argue: there is no undertaking here to keep serving
+      // anyone, and asking people to come and negotiate would imply one.
+      expect(body).not.toMatch(/issues|contact|tell us|get in touch/i);
+    }
   });
 
   it("is never cached, so a limit lifts as soon as it lifts", () => {
