@@ -200,6 +200,16 @@ const TERMS =
   "This service is provided as-is, with no availability guarantee and no\nsupport.";
 
 /**
+ * The other way out, and the better one for anybody who needs this at scale:
+ * the service is the repository. Cloudflare's free tier covers a great deal
+ * of it, and a copy nobody else shares has no limits to trip over.
+ */
+const SELF_HOST = `Or run your own. This service is open source and deploys to your own
+Cloudflare account:
+
+  https://github.com/reearth/reearth-terrain`;
+
+/**
  * Say no, and say where the data is.
  *
  * The pointer to the source is the whole value of this response. Somebody
@@ -224,6 +234,8 @@ The underlying data is published and free to download:
 
 ${SOURCES}
 
+${SELF_HOST}
+
 ${TERMS}
 `
       : `Refused: too many requests from this client.
@@ -234,6 +246,8 @@ ordinary browser cache stays well under the limit.
 If you want the data in bulk, it is published and free to download:
 
 ${SOURCES}
+
+${SELF_HOST}
 
 ${TERMS}
 `;

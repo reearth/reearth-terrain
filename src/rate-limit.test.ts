@@ -234,6 +234,15 @@ describe("refusal", () => {
     expect(await refusal("sweep").text()).toContain("walking the tile grid");
   });
 
+  it("points at the repository, which is the way out with no limits in it", async () => {
+    for (const reason of ["rate", "sweep"] as const) {
+      const body = await refusal(reason).text();
+      expect(body).toContain("github.com/reearth/reearth-terrain");
+      expect(body).toContain("open source");
+      expect(body).toContain("Cloudflare account");
+    }
+  });
+
   it("says what the service does and does not undertake", async () => {
     for (const reason of ["rate", "sweep"] as const) {
       const body = await refusal(reason).text();
