@@ -1,0 +1,131 @@
+# Warming, after a change to this service's cache keys.
+#
+# `okibi.epochs.json` holds the tileset version, and it is the R2 prefix every
+# cached tile lives under: bump it and the whole tileset is cold, with the next
+# visitor to each tile paying a fresh DEM read, a geoid sample and a mesh
+# build. okibi regenerates the ones people actually ask for, before they ask.
+#
+# This is the busiest of the three services by two orders of magnitude — about
+# twenty million tile requests a day — so what a bump costs in cold starts is
+# correspondingly larger, and so is what warming the head of it saves.
+#
+# There is no `watch` job. The Mapterhorn DEM is revalidated per tile against
+# its upstream `Last-Modified` rather than by rotating a prefix, so a DEM
+# update is not an invalidation here. The one key part that does move without
+# a commit is the Protomaps watermask build, and that route carried 0.03% of
+# this service's requests when it was last measured — a watch for it would be
+# machinery for a rounding error. Measure again before adding one.
+
+name: okibi
+
+on:
+  pull_request:
+    paths:
+      - "okibi.epochs.json"
+      - "okibi.manifest.json"
+      - ".github/workflows/okibi.yml"
+  push:
+    branches: [main]
+    paths:
+      - "okibi.epochs.json"
+      - "okibi.manifest.json"
+      - ".github/workflows/okibi.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  # On a pull request nothing is warmed. The estimate is posted, and that on
+  # its own is the point: a commit that moves one version string has a price,
+  # and a reviewer can see it next to the diff.
+  estimate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2 # the previous commit's epochs, to diff against
+
+      - name: Fetch the digests
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.OKIBI_ACCOUNT_ID }}
+        run: |
+          mkdir -p digests
+          for day in $(seq 1 7); do
+            date=$(date -u -d "-$day day" +%Y-%m-%d)
+            npx --yes wrangler@4 r2 object get \
+              "reearth-terrain/okibi/digests/$date.jsonl" \
+              --file "digests/$date.jsonl" --remote || true
+          done
+
+      - uses: reearth/okibi/actions/plan@v0.8.0
+        with:
+          manifests: okibi.manifest.json
+          digests: digests/
+          # The estimate is only worth reading if the URLs behind it exist.
+          # The planner fills a template from the manifest and cannot know the
+          # template was right; when it is not, every entry answers 404 and
+          # the plan still reads as correct.
+          verify: "5"
+          warm-secret: ${{ secrets.OKIBI_WARM_SECRET }}
+
+  # After the deploy, the same plan is derived and then run. Warming is a GET
+  # to this worker's own tile path, so nothing here knows how a mesh is built.
+  warm:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Warming is not part of shipping. If it fails the tiles are generated on
+    # demand exactly as they would have been.
+    continue-on-error: true
+    concurrency:
+      # A second deploy makes the first deploy's plan obsolete: it warms an
+      # epoch that is no longer current.
+      group: okibi-warm-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Fetch the digests
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.OKIBI_ACCOUNT_ID }}
+        run: |
+          mkdir -p digests
+          for day in $(seq 1 7); do
+            date=$(date -u -d "-$day day" +%Y-%m-%d)
+            npx --yes wrangler@4 r2 object get \
+              "reearth-terrain/okibi/digests/$date.jsonl" \
+              --file "digests/$date.jsonl" --remote || true
+          done
+
+      - uses: reearth/okibi/actions/plan@v0.8.0
+        id: plan
+        with:
+          manifests: okibi.manifest.json
+          digests: digests/
+          comment: "false"
+          verify: "5"
+          warm-secret: ${{ secrets.OKIBI_WARM_SECRET }}
+          # Warming the tiles people ask for in the morning, before morning.
+          deadline: ${{ github.event.repository.pushed_at }}
+
+      - uses: reearth/okibi/actions/warm@v0.8.0
+        if: steps.plan.outputs.plan != ''
+        with:
+          plan: ${{ steps.plan.outputs.plan }}
+          manifests: okibi.manifest.json
+          # A plan for this service is large enough that the queue, not the
+          # job, is where it belongs; `auto` decides by whether it would fit.
+          mode: auto
+          executor-url: ${{ vars.OKIBI_EXECUTOR_URL }}
+          executor-token: ${{ secrets.OKIBI_EXECUTOR_TOKEN }}
+          # Shared with this worker, which believes a request is okibi's only
+          # when the header carries this value. Without it every warmed tile
+          # is counted as demand and okibi warms it again tomorrow.
+          warm-secret: ${{ secrets.OKIBI_WARM_SECRET }}
