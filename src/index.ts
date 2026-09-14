@@ -23,6 +23,7 @@ import { cachedTile, bodyEtag, matchesIfNoneMatch } from "./cache.js";
 import { demandFor } from "./okibi.js";
 import { meshCacheVersion } from "./cache-patches.js";
 import { runCleanup } from "./cleanup.js";
+import { counting, reportReads } from "./r2-reads.js";
 import { dayBefore, takeDigest } from "./okibi-digest.js";
 import {
   MESH_GRID_SIZE,
@@ -758,7 +759,17 @@ async function serveHeights(
       { status: 400 },
     );
   }
-  const heights = await samplePointHeights(tileset, points, env);
+  // Counted for the same reason a tile build is, and more urgently: this
+  // route takes many points per request, so what it costs in R2 reads scales
+  // with what the caller asked for rather than with the request count. It is
+  // also the strongest candidate for the reads nothing else explains — a
+  // measured tile build is about four reads and there are only ~780k of them
+  // a day, against 150M reads. See src/r2-reads.ts.
+  const { value: heights, tally } = await counting(() =>
+    samplePointHeights(tileset, points, env),
+  );
+  reportReads({ route: "heights.json", tileset: tileset.name, points: points.length }, tally);
+
   return metadataJson(
     req,
     {
