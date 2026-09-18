@@ -1,3 +1,6 @@
+import { type Demand, writeDemand } from "./okibi.js";
+import { countRead, counting, reportReads } from "./r2-reads.js";
+
 // Two-layer cache for generated tiles, plus ETag / If-None-Match support.
 //
 // L1: Cache API (Cloudflare edge cache). Keyed on the request URL after
@@ -48,6 +51,13 @@ export interface TileCacheParams {
    * `ttlMs` so edge hits cannot outlive the freshness window.
    */
   freshness?: FreshnessProbe;
+  /** What okibi records about this request, if anything.
+   *
+   *  Here rather than at the callers because this is the one place that
+   *  knows which layer answered and how long generating took. The parts a
+   *  route knows and this does not — which grid its coordinates are on,
+   *  what its URL looks like — come in with it. */
+  demand?: Demand;
 }
 
 export interface FreshnessProbe {
@@ -100,13 +110,48 @@ export async function cachedTile(
   const r2Key = buildR2Key(params);
   const cache = caches.default;
 
+  // Timed from here rather than from around generate(), because a Worker's
+  // clock only advances after I/O — a Spectre mitigation — so a stopwatch
+  // either side of a generator reads whatever its last fetch left behind, and
+  // a generator that is pure CPU reads zero. What this spans is a cold
+  // request end to end, which is also the number worth having: it is what
+  // somebody waited.
+  const startedAt = Date.now();
+
+  const record = (
+    cacheStatus: "hit" | "miss",
+    layer: "edge" | "store" | undefined,
+    genMs: number,
+    bytes: number,
+  ): void => {
+    if (!params.demand) return;
+    // Both cache layers are hits as far as demand goes: what is being counted
+    // is that somebody wanted this tile, and which layer had the bytes is not
+    // what makes it worth warming.
+    writeDemand(req, params.demand, {
+      cacheStatus,
+      layer,
+      genMs,
+      bytes,
+      z: params.z,
+      x: params.x,
+      y: params.y,
+      format: params.format,
+    });
+  };
+
   // L1: edge cache.
   const l1Hit = await cache.match(cacheKey);
   logCache("L1", l1Hit ? "hit" : "miss", params);
-  if (l1Hit) return decorate(l1Hit, "L1", etag, params);
+  if (l1Hit) {
+    record("hit", "edge", 0, Number(l1Hit.headers.get("content-length") ?? 0));
+    return decorate(l1Hit, "L1", etag, params);
+  }
 
-  // L2: R2.
+  // L2: R2. One class B operation — the cheap kind, one per served tile,
+  // as against the hundreds a build costs. See src/r2-reads.ts.
   if (bucket) {
+    countRead(r2Key, 0);
     const obj = await bucket.get(r2Key);
     if (obj) {
       const fresh = await isStillFresh(obj, params.freshness);
@@ -120,6 +165,7 @@ export async function cachedTile(
         const contentEncoding = obj.httpMetadata?.contentEncoding;
         const resp = buildResponse(body, contentType, "L2", etag, params, contentEncoding);
         ctx.waitUntil(cache.put(cacheKey, buildL1Internal(body, contentType, params, contentEncoding)));
+        record("hit", "store", 0, body.byteLength);
         return resp;
       }
       logCache("L2", "stale", params);
@@ -130,8 +176,25 @@ export async function cachedTile(
   }
 
   // L3: generate.
+  //
+  // Counted, because this is where the class B bill is made: a build samples
+  // a DEM and a geoid out of COGs and every byte range is its own billable
+  // read. Only here — a served hit costs one read, and twenty million lines a
+  // day saying so would cost more than they explain. See src/r2-reads.ts.
   logCache("gen", "miss", params);
-  const { bytes, contentType, contentEncoding } = await generate();
+  const { value: generated, tally } = await counting(generate);
+  reportReads(
+    {
+      tileset: params.tileset,
+      dataType: params.dataType,
+      encoding: params.encoding,
+      z: params.z,
+      x: params.x,
+      y: params.y,
+    },
+    tally,
+  );
+  const { bytes, contentType, contentEncoding } = generated;
   const resp = buildResponse(bytes, contentType, "MISS", etag, params, contentEncoding);
   const writes: Promise<unknown>[] = [
     cache.put(cacheKey, buildL1Internal(bytes, contentType, params, contentEncoding)),
@@ -141,7 +204,14 @@ export async function cachedTile(
     if (contentEncoding) httpMetadata.contentEncoding = contentEncoding;
     writes.push(bucket.put(r2Key, bytes, { httpMetadata }));
   }
-  ctx.waitUntil(Promise.all(writes));
+  ctx.waitUntil(
+    // Recorded after the writes, because they are the I/O that lets the clock
+    // catch up with the generator. Reading it before would be reading the
+    // time as of whatever generating last fetched.
+    Promise.all(writes).finally(() =>
+      record("miss", undefined, Date.now() - startedAt, bytes.byteLength),
+    ),
+  );
   return resp;
 }
 

@@ -20,8 +20,22 @@ import {
   type Tileset,
 } from "./tilesets.js";
 import { cachedTile, bodyEtag, matchesIfNoneMatch } from "./cache.js";
+import { demandFor } from "./okibi.js";
+import { siteOf } from "@reearth/okibi/writer";
+import { loadPolicy } from "./policy.js";
+import { withRangeCache } from "./range-cache.js";
+import {
+  cellOf,
+  checkRateLimit,
+  clientKey,
+  clientsOn,
+  noteAsk,
+  refusal,
+} from "./rate-limit.js";
 import { meshCacheVersion } from "./cache-patches.js";
 import { runCleanup } from "./cleanup.js";
+import { counting, reportReads } from "./r2-reads.js";
+import { dayBefore, takeDigest } from "./okibi-digest.js";
 import {
   MESH_GRID_SIZE,
   buildWaterMask,
@@ -167,10 +181,11 @@ export default {
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
-    return withCors(await handle(req, env, ctx));
+    // One cache-operation budget for the whole request — see src/range-cache.ts.
+    return withCors(await withRangeCache(() => handle(req, env, ctx)));
   },
 
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     console.log("scheduled: cleanup tick", {
       cron: controller.cron,
       scheduledTime: controller.scheduledTime,
@@ -179,17 +194,128 @@ export default {
       console.warn("scheduled: R2 binding missing, skipping cleanup");
       return;
     }
-    ctx.waitUntil(
-      runCleanup(env.R2, resolveLiveCleanupTilesets()).catch((err) => {
-        console.error("scheduled: cleanup failed", err);
-      }),
-    );
+
+    // Awaited rather than handed to `ctx.waitUntil`. Work passed to waitUntil
+    // runs after the invocation ends, and only for as long as the runtime is
+    // willing to keep an ended invocation alive — which is not a budget
+    // either of these fits in: the sweep deletes thousands of objects and the
+    // digest reads a day of events. It cut Papers' and Buildings' digests off
+    // on 2026-09-07. Awaiting keeps the invocation open until both finish.
+    //
+    // Settled together rather than in sequence, because one failing is not a
+    // reason for the other not to run.
+    const [swept, digest] = await Promise.allSettled([
+      runCleanup(env.R2, resolveLiveCleanupTilesets()),
+      takeDigest(env, dayBefore(controller.scheduledTime)),
+    ]);
+
+    // Logged rather than thrown. A failed sweep is stale objects until
+    // tomorrow, and a failed digest is a day missing — neither is worth
+    // retrying against the same finished day.
+    if (swept.status === "rejected") console.error("scheduled: cleanup failed", swept.reason);
+    if (digest.status === "rejected") console.warn("okibi: digest failed", digest.reason);
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * The z8 cell a request is asking about, or null when the path is not one of
+ * the generated routes. Tile routes end in `/{z}/{x}/{y}` with or without an
+ * extension; `/heights.json` carries coordinates instead, and its first point
+ * places it well enough — a sampler sweeping the globe moves between cells
+ * exactly as a tile sweep does.
+ */
+function cellsOfRequest(url: URL): { cells: string[]; asks: number } | null {
+  const tile = /\/(\d+)\/(\d+)\/(\d+)(?:\.[a-z0-9]+)?$/.exec(url.pathname);
+  if (tile) {
+    return {
+      cells: [cellOf(Number(tile[1]), Number(tile[2]), Number(tile[3]))],
+      asks: 1,
+    };
+  }
+
+  if (url.pathname !== "/heights.json") return null;
+
+  // Every point, not just the first. A request here carries up to 256 of them
+  // and covers a median of 17 cells, so reading only the first made the route
+  // that ranges widest the one the sweep rule could see least.
+  const cells = new Set<string>();
+  let asks = 0;
+  for (const segment of (url.searchParams.get("points") ?? "").split(";")) {
+    const [lonRaw, latRaw] = segment.split(",");
+    const lon = Number(lonRaw);
+    const lat = Number(latRaw);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    asks++;
+    if (cells.size < MAX_POINTS_PER_REQUEST) cells.add(cellOfLonLat(lon, lat));
+  }
+  return asks > 0 ? { cells: [...cells], asks } : null;
+}
+
+/** The z8 cell containing (lon, lat), in the same form as `cellOf`. */
+function cellOfLonLat(lon: number, lat: number): string {
+  const n = 1 << 8;
+  const clamped = Math.max(-85.0511287798066, Math.min(85.0511287798066, lat));
+  const rad = (clamped * Math.PI) / 180;
+  const x = Math.floor(((lon + 180) / 360) * n);
+  const y = Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * n);
+  return cellOf(8, ((x % n) + n) % n, Math.max(0, Math.min(n - 1, y)));
+}
+
+/**
+ * Decide whether to serve this request at all, before any of it is paid for.
+ *
+ * Returns a refusal to send back, or null to carry on. Under "observe" it
+ * always returns null and only writes down what it would have done, which is
+ * how this is meant to run until there is a day of evidence about who it
+ * would actually catch. See src/rate-limit.ts and src/policy.ts.
+ */
+async function guard(req: Request, url: URL, env: Env): Promise<Response | null> {
+  const asked = cellsOfRequest(url);
+  if (!asked) return null; // not a generated route; nothing here is expensive
+
+  const policy = await loadPolicy(env);
+  if (policy.rateLimit === "off" && policy.crawl === "off") return null;
+
+  const origin = siteOf(req);
+  const key = clientKey(req, origin);
+
+  const rate = await checkRateLimit(key, origin, policy, env);
+  if (rate !== "allow") {
+    console.log("limit", {
+      rule: "rate",
+      decision: rate,
+      origin,
+      clients: clientsOn(origin),
+      path: url.pathname,
+    });
+    if (rate === "refuse") return refusal("rate");
+  }
+
+  const sweep = noteAsk(key, asked.cells, asked.asks, policy);
+  if (sweep.decision !== "allow") {
+    console.log("limit", {
+      rule: "sweep",
+      decision: sweep.decision,
+      origin,
+      path: url.pathname,
+      // A floor, not a total: only what this isolate has seen. It says
+      // whether an origin is one client or a crowd, which decides whether a
+      // limit is the right tool at all. See clientsOn.
+      clients: clientsOn(origin),
+      cells: sweep.cells,
+      asks: sweep.asks,
+    });
+    if (sweep.decision === "refuse") return refusal("sweep");
+  }
+  return null;
+}
 
 async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(req.url);
   try {
+      const refused = await guard(req, url, env);
+      if (refused) return refused;
+
       // Landing-page content negotiation. `run_worker_first` in
       // wrangler.toml routes `/` and `/index.html` through the worker
       // before the asset router; when an AI client (or `curl -H "Accept:
@@ -389,6 +515,14 @@ async function serveTile(
       y,
       format,
       freshness: demFreshness(tileset, dataType, z, x, y),
+      demand: demandFor(env, {
+        tileset: tileset.name,
+        id: `${encoding}/${dataType}/${z}/${x}/${y}.${format}`,
+        // Raster DEM encodings are XYZ, which is Web Mercator.
+        grid: "web-mercator",
+        // The version prefix buildR2Key namespaces by, as it spells it.
+        epoch: { algo: resolveTilesetVersion(tileset) },
+      }),
     },
     async () => {
       const samples = await readTileSamples(tileset, dataType, z, x, y, env);
@@ -444,6 +578,19 @@ async function serveWatermask(
       x,
       y,
       format,
+      demand: demandFor(env, {
+        tileset: tileset.name,
+        id: `${scheme}/${z}/${x}/${y}.${format}`,
+        // The XYZ variant is Web Mercator; the -tms one is the geodetic grid
+        // the mesh tiles use, which is the point of having both.
+        grid: scheme === "watermask" ? "web-mercator" : "geographic-tms",
+        // Two parts of the key, because the key keeps them apart: the
+        // tileset's version and the upstream watermask build it was cut from.
+        epoch: {
+          source: watermask.version,
+          algo: resolveTilesetVersion(tileset),
+        },
+      }),
     },
     async () => {
       const mask = await watermask.provider.buildMask(bounds);
@@ -524,6 +671,17 @@ async function serveMesh(
       version: meshCacheVersion(resolveTilesetVersion(tileset), z, x, y),
       encoding,
       dataType,
+      demand: demandFor(env, {
+        tileset: tileset.name,
+        id: `cesium-mesh/${dataType}/${z}/${x}/${y}.terrain`,
+        // Quantized mesh is the Cesium geodetic grid: two root tiles wide,
+        // y from the south.
+        grid: "geographic-tms",
+        // The same per-tile version the key uses. A region-scoped patch
+        // gives its tiles their own, which is exactly what makes it able to
+        // invalidate only what it changed.
+        epoch: { algo: meshCacheVersion(resolveTilesetVersion(tileset), z, x, y) },
+      }),
       z,
       x,
       y,
@@ -709,7 +867,17 @@ async function serveHeights(
       { status: 400 },
     );
   }
-  const heights = await samplePointHeights(tileset, points, env);
+  // Counted for the same reason a tile build is, and more urgently: this
+  // route takes many points per request, so what it costs in R2 reads scales
+  // with what the caller asked for rather than with the request count. It is
+  // also the strongest candidate for the reads nothing else explains — a
+  // measured tile build is about four reads and there are only ~780k of them
+  // a day, against 150M reads. See src/r2-reads.ts.
+  const { value: heights, tally } = await counting(() =>
+    samplePointHeights(tileset, points, env),
+  );
+  reportReads({ route: "heights.json", tileset: tileset.name, points: points.length }, tally);
+
   return metadataJson(
     req,
     {
