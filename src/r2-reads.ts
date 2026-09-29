@@ -58,10 +58,20 @@ export function totalReads(tally: ReadTally): number {
  *
  * Only on a miss, and only when reads actually happened: logging a line for
  * every cache hit would be twenty million lines a day saying zero.
+ *
+ * `always` is for `/heights.json`, whose line also says where each point's
+ * answer came from. A request answered entirely from cache is the outcome
+ * that line exists to count, so leaving it out would hide the hit rate. It is
+ * two million requests a day rather than twenty, and most of them logged a
+ * line here already.
  */
-export function reportReads(what: Record<string, unknown>, tally: ReadTally): void {
+export function reportReads(
+  what: Record<string, unknown>,
+  tally: ReadTally,
+  opts: { always?: boolean } = {},
+): void {
   const total = totalReads(tally);
-  if (total === 0) return;
+  if (total === 0 && !opts.always) return;
 
   console.log("r2 reads", {
     ...what,
