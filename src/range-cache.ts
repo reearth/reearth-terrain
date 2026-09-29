@@ -12,9 +12,12 @@
 // object until the TTL runs out.
 //
 // Two things bound it. Cache API calls share the subrequest quota — 1,000 per
-// request on the paid plan — and a scattered point request was measured making
-// 628 R2 reads, which at a lookup and a store apiece would run past that. So
-// each request gets a budget, and past it the cache is simply skipped: the
+// request on the paid plan when this was written; Cloudflare's limits page
+// says 10,000 as of 2026-09-29, which this budget does not rely on — and a
+// scattered point request was measured making 628 R2 reads, which at a lookup
+// and a store apiece would run past that. So each request gets a budget,
+// shared with the per-point heights cache in src/heights-cache.ts, and past
+// it the cache is simply skipped: the
 // read still happens, it is just not helped. And the cache is keyed by object
 // key and byte range, not by content, so an object replaced in place under the
 // same key would be served from the old bytes until the TTL expires. Every key
@@ -44,13 +47,29 @@ export function withRangeCache<T>(fn: () => Promise<T>): Promise<T> {
   return budgets.run({ left: OPS_PER_REQUEST }, fn);
 }
 
-/** Spend `n` operations, or report that there is nothing left to spend. */
-function afford(n: number): boolean {
+/**
+ * Spend `n` operations, or report that there is nothing left to spend.
+ *
+ * Exported because the range cache is not the only thing in a request that
+ * talks to the Cache API — src/heights-cache.ts does too — and the quota being
+ * guarded is the request's, not this module's. Two budgets would each be
+ * sized as if the other did not exist.
+ */
+export function afford(n: number): boolean {
   const budget = budgets.getStore();
   if (!budget) return false; // outside a request: don't touch the shared cache
   if (budget.left < n) return false;
   budget.left -= n;
   return true;
+}
+
+/**
+ * Hand back operations that were set aside and turned out not to be needed,
+ * so what a request did not spend is still there for the reads after it.
+ */
+export function refund(n: number): void {
+  const budget = budgets.getStore();
+  if (budget) budget.left += n;
 }
 
 /** Test-only: how much of this request's budget is left. */

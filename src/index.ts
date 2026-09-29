@@ -50,6 +50,7 @@ import {
   parsePointsParam,
   samplePointHeights,
 } from "./sample.js";
+import { cachedPointHeights } from "./heights-cache.js";
 import { resolvePmtilesSource } from "./protomaps.js";
 import type { GeodeticBounds } from "./cesium.js";
 
@@ -422,13 +423,13 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
       if (m) {
         const tileset = resolveTileset(m[1], env);
         if (!tileset) return notFound(`unknown tileset: ${m[1]}`);
-        return await serveHeights(req, tileset, url.searchParams, env);
+        return await serveHeights(req, ctx, tileset, url.searchParams, env);
       }
       m = HEIGHTS_DEFAULT.exec(url.pathname);
       if (m) {
         const tileset = resolveTileset(undefined, env);
         if (!tileset) return notFound("default tileset not configured");
-        return await serveHeights(req, tileset, url.searchParams, env);
+        return await serveHeights(req, ctx, tileset, url.searchParams, env);
       }
 
       // `/debug/*` endpoints are introspection-only and stay disabled in
@@ -844,6 +845,7 @@ const HEIGHTS_CACHE_CONTROL = "public, max-age=300";
 
 async function serveHeights(
   req: Request,
+  ctx: ExecutionContext,
   tileset: Tileset,
   query: URLSearchParams,
   env: Env,
@@ -873,10 +875,23 @@ async function serveHeights(
   // also the strongest candidate for the reads nothing else explains — a
   // measured tile build is about four reads and there are only ~780k of them
   // a day, against 150M reads. See src/r2-reads.ts.
-  const { value: heights, tally } = await counting(() =>
-    samplePointHeights(tileset, points, env),
+  //
+  // Each point is looked up in memory and the colo's cache before anything is
+  // decoded, because decoding is where this route's CPU goes — see
+  // src/heights-cache.ts. The line says where the answers came from, and is
+  // written for every request so the hit rate can be read off a tail.
+  const { value: { heights, served }, tally } = await counting(() =>
+    cachedPointHeights(tileset, points, {
+      waitUntil: (p) => ctx.waitUntil(p),
+      compute: (missed) => samplePointHeights(tileset, missed, env),
+      disabled: cacheDisabled(env),
+    }),
   );
-  reportReads({ route: "heights.json", tileset: tileset.name, points: points.length }, tally);
+  reportReads(
+    { route: "heights.json", tileset: tileset.name, points: points.length, ...served },
+    tally,
+    { always: true },
+  );
 
   return metadataJson(
     req,
