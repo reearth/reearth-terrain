@@ -8,10 +8,20 @@ compatibility_flags = ["nodejs_compat"]
 routes = [{ pattern = "terrain.reearth.land", custom_domain = true }]
 
 # Workers Observability: structured logs + invocation metrics retained
-# server-side. Cheap, lets us debug production tile generation issues
-# without having to tail logs manually.
+# server-side, so production tile generation can be debugged without
+# having to tail logs manually.
+#
+# Sampled, because it is not cheap at this volume. Workers Logs bills
+# every invocation as one log event and every console.log line as
+# another, past 20M a month at $0.60 per million. This worker answers
+# ~18M requests a day and writes ~1.3 lines per request on top of the
+# invocation, which unsampled is about 1.2B events a month (~$700).
+# One request in a hundred is still thousands of kept events an hour,
+# enough to debug with; a whole-population question is what the
+# Analytics Engine dataset and the GraphQL metrics are for.
 [observability]
 enabled = true
+head_sampling_rate = 0.01
 
 # Tile-demand events, one per tile request, read by okibi so that something
 # outside this worker can warm what people actually ask for after a version
