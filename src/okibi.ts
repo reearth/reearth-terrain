@@ -7,9 +7,14 @@
 // which of those tiles are worth regenerating early, and it can only decide
 // that from a record of what was asked for.
 //
-// One event per tile request, hits included: a hit is the evidence that
+// Every tile request is recorded, hits included: a hit is the evidence that
 // somebody wants that tile, and a ledger of misses would only record where the
 // cache failed. See https://github.com/reearth/okibi, spec/tile-demand.md.
+//
+// Hits are recorded one in SAMPLE_HITS, each carrying that weight, and every
+// miss is written. Hits are 95% of ~18M events a day, and Analytics Engine
+// already keeps as few as one row in 500 of them when it is read, so writing a
+// tenth adds little error to a ledger that was already a sample.
 //
 // Nothing in this file may fail a tile response.
 
@@ -24,6 +29,17 @@ import {
 } from "@reearth/okibi/writer";
 
 import epochs from "../okibi.epochs.json";
+
+/**
+ * Keep one organic hit in this many, and write it with this weight.
+ *
+ * The cost is resolution in the tail: a tile with n hits in a digest is
+ * counted to within about sqrt(9/n) — 3% at ten thousand, 30% at a hundred —
+ * and a tile hit only once or twice may not appear at all. Warming ranks the
+ * head, where that error is smallest. Misses and okibi's own requests are
+ * never sampled.
+ */
+const SAMPLE_HITS = 10;
 
 /**
  * Which grid a route's `z/x/y` are on.
@@ -117,6 +133,7 @@ export function writeDemand(req: Request, demand: Demand, measured: Measured): v
     createWriter({
       dataset: demand.dataset,
       epochs,
+      sampleHits: SAMPLE_HITS,
       onError: (error) => console.warn("okibi:", error),
     }).write(event);
   } catch (error) {
