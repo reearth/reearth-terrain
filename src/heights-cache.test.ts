@@ -7,7 +7,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  POINT_TTL_SECONDS,
+  PINNED_TTL_SECONDS,
+  REVALIDATED_TTL_SECONDS,
   cachedPointHeights,
   clearPointMemory,
   pointKey,
@@ -183,7 +184,7 @@ describe("cachedPointHeights", () => {
 
     await withRangeCache(() => ask(points, { compute, cache, now }));
 
-    t += POINT_TTL_SECONDS * 1000 - 1;
+    t += REVALIDATED_TTL_SECONDS * 1000 - 1;
     const warm = await withRangeCache(() => ask(points, { compute, cache, now }));
     expect(warm.served.memory).toBe(1);
 
@@ -204,11 +205,62 @@ describe("cachedPointHeights", () => {
 
     await withRangeCache(() => ask(points, { compute, cache, now }));
     clearPointMemory();
-    t += POINT_TTL_SECONDS * 1000 - 10;
+    t += REVALIDATED_TTL_SECONDS * 1000 - 10;
     const fromColo = await withRangeCache(() => ask(points, { compute, cache, now }));
     expect(fromColo.served.cache).toBe(1);
 
     t += 10;
+    const stale = await withRangeCache(() => ask(points, { compute, cache, now }));
+    expect(stale.served.computed).toBe(1);
+  });
+
+  it("keeps an answer from a pinned tile for a week, and one from a rechecked tile for six hours", async () => {
+    const { cache, held } = store();
+    const pinned = pts("139.7,35.7");
+    const moving = pts("10,10");
+    const compute = computer((p) => ({ ...fakeSample(p), revalidated: p.lon === 10 }));
+    let t = 1_000_000;
+    const now = () => t;
+
+    await withRangeCache(() => ask([...pinned, ...moving], { compute, cache, now }));
+    const ages = [...held.values()].map((body) => JSON.parse(body).ttl).sort((a, b) => a - b);
+    expect(ages).toEqual([REVALIDATED_TTL_SECONDS, PINNED_TTL_SECONDS]);
+
+    clearPointMemory();
+    t += REVALIDATED_TTL_SECONDS * 1000;
+    const later = await withRangeCache(() => ask([...pinned, ...moving], { compute, cache, now }));
+    expect(later.served).toEqual({ memory: 0, cache: 1, computed: 1 });
+
+    clearPointMemory();
+    t += (PINNED_TTL_SECONDS - REVALIDATED_TTL_SECONDS) * 1000;
+    const week = await withRangeCache(() => ask(pinned, { compute, cache, now }));
+    expect(week.served.computed).toBe(1);
+  });
+
+  it("stores each answer for as long as it is trusted", async () => {
+    const { cache, put } = store();
+    const compute = computer((p) => ({ ...fakeSample(p), revalidated: false }));
+
+    await withRangeCache(() => ask(pts("139.7,35.7"), { compute, cache }));
+    const stored = put.mock.calls[0]![1] as Response;
+    expect(stored.headers.get("Cache-Control")).toBe(`public, max-age=${PINNED_TTL_SECONDS}`);
+  });
+
+  it("reads an answer stored before the TTL depended on the source as a six-hour one", async () => {
+    const { cache, held } = store();
+    const compute = computer();
+    const points = pts("139.7,35.7");
+    let t = 1_000_000;
+    const now = () => t;
+    const { elevation, geoid } = fakeSample(points[0]!);
+    held.set(pointKey(tileset, points[0]!), JSON.stringify({ elevation, geoid, at: t }));
+
+    t += REVALIDATED_TTL_SECONDS * 1000 - 1;
+    const warm = await withRangeCache(() => ask(points, { compute, cache, now }));
+    expect(warm.served.cache).toBe(1);
+
+    clearPointMemory();
+    t += 1;
     const stale = await withRangeCache(() => ask(points, { compute, cache, now }));
     expect(stale.served.computed).toBe(1);
   });

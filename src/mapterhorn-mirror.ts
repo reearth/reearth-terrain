@@ -258,6 +258,15 @@ export class HybridMapterhornSource implements DemSource {
     })();
   }
 
+  // The same branch decision as `freshness`, without the probe.
+  async revalidated(z: number, x: number, y: number): Promise<boolean> {
+    if (z <= this.#planetMaxZoom) return false;
+    const set = await this.#mirroredArchives();
+    if (set.has(regionalArchiveName(z, x, y))) return false;
+    const upstream = this.#upstream.revalidated;
+    return upstream ? upstream.call(this.#upstream, z, x, y) : false;
+  }
+
   async #mirroredArchives(): Promise<Set<string>> {
     if (this.#mirroredSet && this.#mirroredExpires > Date.now()) return this.#mirroredSet;
     const p = this.#listMirroredArchives();

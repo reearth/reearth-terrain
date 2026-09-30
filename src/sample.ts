@@ -34,6 +34,12 @@ export interface PointHeights {
   elevation: number | null;
   geoid: number | null;
   ellipsoid: number | null;
+  /**
+   * Whether the DEM tile this came from is rechecked upstream under the same
+   * tileset version (see `DemSource.revalidated`), and so how long the answer
+   * may be kept. Not part of the response.
+   */
+  revalidated?: boolean;
 }
 
 /** Web Mercator latitude range (the projection becomes undefined past this). */
@@ -51,12 +57,13 @@ export async function samplePointHeights(
 
   const out: PointHeights[] = new Array(points.length);
   for (let i = 0; i < points.length; i++) {
-    const e = dem[i];
+    const e = dem.values[i];
     const g = geoid[i];
     out[i] = {
       elevation: e ?? null,
       geoid: g ?? null,
       ellipsoid: e != null && g != null ? e + g : null,
+      revalidated: dem.revalidated[i]!,
     };
   }
   return out;
@@ -74,8 +81,9 @@ async function sampleDemAtPoints(
   dem: DemSource,
   points: SamplePoint[],
   maxZoom: number,
-): Promise<(number | null)[]> {
+): Promise<{ values: (number | null)[]; revalidated: boolean[] }> {
   const out: (number | null)[] = new Array(points.length).fill(null);
+  const revalidated: boolean[] = new Array(points.length).fill(false);
 
   // Bin points by tile at maxZoom.
   type Bin = { tx: number; ty: number; indices: number[] };
@@ -97,13 +105,18 @@ async function sampleDemAtPoints(
       const result = await fetchTileWithCascade(dem, maxZoom, bin.tx, bin.ty);
       if (!result) return;
       const { tile, z } = result;
+      // Asked of the tile the cascade settled on, which is the one the
+      // answer depends on — not the one it started from.
+      const shift = maxZoom - z;
+      const moves = (await dem.revalidated?.(z, bin.tx >> shift, bin.ty >> shift)) ?? false;
       for (const idx of bin.indices) {
         const { lon, lat } = points[idx]!;
         out[idx] = bilinearSampleWmTile(tile, z, lon, lat);
+        revalidated[idx] = moves;
       }
     }),
   );
-  return out;
+  return { values: out, revalidated };
 }
 
 /**
