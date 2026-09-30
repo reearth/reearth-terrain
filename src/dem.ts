@@ -34,6 +34,15 @@ export interface DemSource {
    * trusts the static tileset version alone.
    */
   freshness?(z: number, x: number, y: number): Promise<Date | null>;
+  /**
+   * Whether this tile can change under the same tileset version and is
+   * rechecked when it does — true exactly where `freshness` would probe.
+   * Something derived from such a tile should be kept no longer than the
+   * freshness window. Cheap, unlike `freshness`: it says where a tile comes
+   * from without asking upstream anything. Absent means never: every tile
+   * is pinned by the version.
+   */
+  revalidated?(z: number, x: number, y: number): Promise<boolean>;
 }
 
 export interface MapterhornOptions {
@@ -143,6 +152,11 @@ export class MapterhornSource implements DemSource {
     if (!lm) return null;
     const ts = Date.parse(lm);
     return Number.isNaN(ts) ? null : new Date(ts);
+  }
+
+  /** Every tile this source serves is one `freshness` probes. */
+  async revalidated(z: number, _x: number, _y: number): Promise<boolean> {
+    return z >= this.#minZoom && z <= this.#maxZoom;
   }
 
   async #fetchAndDecode(z: number, x: number, y: number): Promise<DemTile | null> {

@@ -26,24 +26,32 @@ import { resolveTilesetVersion, type Tileset } from "./tilesets.js";
 
 /**
  * How long an answer is trusted, in both layers, counted from when it was
- * computed rather than from when a layer last stored it.
+ * computed rather than from when a layer last stored it. It depends on which
+ * DEM tile the answer came from, because under `MAPTERHORN_SOURCE = "hybrid"`
+ * the DEM changes in two ways.
  *
- * The DEM under `MAPTERHORN_SOURCE = "hybrid"` changes in two ways. Tiles at
- * z ≤ 12 and in mirrored regional archives come from pinned snapshots with no
- * per-tile freshness at all: a mesh tile built from them is served until the
- * tileset version is bumped, and the version is in the key here too, so for
- * those points this cache is never staler than the tile path — it is fresher.
  * Tiles at z ≥ 13 outside the mirror come from tiles.mapterhorn.com, and there
  * the tile path trusts a cached tile for six hours and then asks upstream
  * whether it changed (`DEM_FRESHNESS_TTL_MS` in src/index.ts, `isStillFresh`
  * in src/cache.ts). Six hours here matches that window, so a regional rebuild
  * reaches a height no later than it reaches the tile covering it.
  *
+ * Tiles at z ≤ 12 and in mirrored regional archives come from snapshots with
+ * no per-tile freshness at all: a mesh tile built from them is served until
+ * the tileset version is bumped, and the version is in the key here too. Six
+ * hours for those bought nothing and cost most of the hit rate — two and a
+ * half hours after this cache was deployed only 30% of points were answered
+ * from it, because each colo forgot the set of points faster than it
+ * learned it. A week is still fresher than the tile path, which never picks
+ * up a new snapshot under the same version, and it bounds how long a mirror
+ * refresh stays invisible here once that changes.
+ *
  * Neither path can be fresher than the upstream fetch it builds from, which
  * the edge holds for a day (`cacheTtl` in `MapterhornSource`). That is
  * unchanged by this cache and is shared with the tile path.
  */
-export const POINT_TTL_SECONDS = 6 * 60 * 60;
+export const REVALIDATED_TTL_SECONDS = 6 * 60 * 60;
+export const PINNED_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 /**
  * Answers held in this isolate. One is a key of about sixty characters and
@@ -59,6 +67,9 @@ interface Answer {
   geoid: number;
   /** When it was computed, in ms since the epoch. */
   at: number;
+  /** How long it is trusted from `at`, in seconds. Absent in answers stored
+   *  before the TTL depended on the source, which were all six hours. */
+  ttl?: number;
 }
 
 // Map preserves insertion order, so re-inserting on access promotes to most
@@ -221,12 +232,15 @@ export async function cachedPointHeights(
  * tile, and `planet.pmtiles` covers the world at z ≤ 12, so a null there means
  * the mirror pointer was missing or unreadable rather than that the ground is
  * not there. Both are worth asking again next time; keeping them would repeat
- * a failure for six hours. A read that throws never reaches here at all —
- * the request fails with a 500 and nothing is stored.
+ * a failure for as long as the answer would be trusted. A read that throws
+ * never reaches here at all — the request fails with a 500 and nothing is
+ * stored.
  */
 function answerOf(h: PointHeights, at: number): Answer | null {
   if (h.elevation == null || h.geoid == null) return null;
-  return { elevation: h.elevation, geoid: h.geoid, at };
+  // Unknown provenance is treated as the kind that moves.
+  const ttl = h.revalidated === false ? PINNED_TTL_SECONDS : REVALIDATED_TTL_SECONDS;
+  return { elevation: h.elevation, geoid: h.geoid, at, ttl };
 }
 
 function heightsOf(a: Answer): PointHeights {
@@ -254,10 +268,14 @@ function remember(key: string, answer: Answer): void {
 /**
  * Checked on every read, in both layers, because the Cache API's own expiry
  * counts from when an entry was stored, and an answer copied from the colo
- * into memory would otherwise start its six hours over.
+ * into memory would otherwise start its time over.
  */
 function isFresh(a: Answer, now: number): boolean {
-  return now - a.at < POINT_TTL_SECONDS * 1000;
+  return now - a.at < ttlOf(a) * 1000;
+}
+
+function ttlOf(a: Answer): number {
+  return a.ttl ?? REVALIDATED_TTL_SECONDS;
 }
 
 async function lookup(store: PointStore, key: string, now: number): Promise<Answer | null> {
@@ -272,7 +290,8 @@ async function lookup(store: PointStore, key: string, now: number): Promise<Answ
     ) {
       return null;
     }
-    const answer = { elevation: body.elevation, geoid: body.geoid, at: body.at };
+    const answer: Answer = { elevation: body.elevation, geoid: body.geoid, at: body.at };
+    if (typeof body.ttl === "number") answer.ttl = body.ttl;
     return isFresh(answer, now) ? answer : null;
   } catch {
     // A cache that cannot be read is not a reason to fail the request.
@@ -286,7 +305,7 @@ async function save(store: PointStore, key: string, answer: Answer): Promise<voi
       new Request(key),
       new Response(JSON.stringify(answer), {
         headers: {
-          "Cache-Control": `public, max-age=${POINT_TTL_SECONDS}`,
+          "Cache-Control": `public, max-age=${ttlOf(answer)}`,
           "Content-Type": "application/json",
         },
       }),
