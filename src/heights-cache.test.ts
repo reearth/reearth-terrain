@@ -109,8 +109,8 @@ describe("cachedPointHeights", () => {
     const second = await withRangeCache(() => ask(points, { compute }));
 
     expect(compute).toHaveBeenCalledTimes(1);
-    expect(first.served).toEqual({ memory: 0, cache: 0, computed: 2 });
-    expect(second.served).toEqual({ memory: 2, cache: 0, computed: 0 });
+    expect(first.served).toEqual({ memory: 0, cache: 0, computed: 2, expired: 0, revalidated: 2 });
+    expect(second.served).toEqual({ memory: 2, cache: 0, computed: 0, expired: 0, revalidated: 0 });
     expect(second.heights).toEqual(points.map(fakeSample));
     // Serialised, as the response body is, the two cannot be told apart.
     expect(JSON.stringify(second.heights)).toBe(JSON.stringify(first.heights));
@@ -127,7 +127,7 @@ describe("cachedPointHeights", () => {
     clearPointMemory();
     const second = await withRangeCache(() => ask(points, { compute, cache }));
     expect(compute).toHaveBeenCalledTimes(1);
-    expect(second.served).toEqual({ memory: 0, cache: 2, computed: 0 });
+    expect(second.served).toEqual({ memory: 0, cache: 2, computed: 0, expired: 0, revalidated: 0 });
     expect(JSON.stringify(second.heights)).toBe(JSON.stringify(first.heights));
   });
 
@@ -141,7 +141,7 @@ describe("cachedPointHeights", () => {
     expect(compute).toHaveBeenCalledTimes(2);
     expect(compute.mock.calls[1]![0]).toEqual(pts("0,0;2,2;4,4"));
     expect(out.heights).toEqual(all.map(fakeSample));
-    expect(out.served).toEqual({ memory: 2, cache: 0, computed: 3 });
+    expect(out.served).toEqual({ memory: 2, cache: 0, computed: 3, expired: 0, revalidated: 3 });
   });
 
   it("does not keep an answer with a null in it", async () => {
@@ -192,7 +192,7 @@ describe("cachedPointHeights", () => {
     // even though the colo's entry may not have expired by its own clock.
     t += 1;
     const stale = await withRangeCache(() => ask(points, { compute, cache, now }));
-    expect(stale.served).toEqual({ memory: 0, cache: 0, computed: 1 });
+    expect(stale.served).toEqual({ memory: 0, cache: 0, computed: 1, expired: 1, revalidated: 1 });
     expect(compute).toHaveBeenCalledTimes(2);
   });
 
@@ -214,7 +214,7 @@ describe("cachedPointHeights", () => {
     expect(stale.served.computed).toBe(1);
   });
 
-  it("keeps an answer from a pinned tile for a week, and one from a rechecked tile for six hours", async () => {
+  it("keeps an answer from a pinned tile for thirty days, and one from a rechecked tile for six hours", async () => {
     const { cache, held } = store();
     const pinned = pts("139.7,35.7");
     const moving = pts("10,10");
@@ -229,12 +229,30 @@ describe("cachedPointHeights", () => {
     clearPointMemory();
     t += REVALIDATED_TTL_SECONDS * 1000;
     const later = await withRangeCache(() => ask([...pinned, ...moving], { compute, cache, now }));
-    expect(later.served).toEqual({ memory: 0, cache: 1, computed: 1 });
+    expect(later.served).toEqual({ memory: 0, cache: 1, computed: 1, expired: 1, revalidated: 1 });
 
     clearPointMemory();
-    t += (PINNED_TTL_SECONDS - REVALIDATED_TTL_SECONDS) * 1000;
-    const week = await withRangeCache(() => ask(pinned, { compute, cache, now }));
-    expect(week.served.computed).toBe(1);
+    t += (PINNED_TTL_SECONDS - REVALIDATED_TTL_SECONDS) * 1000 - 1;
+    const lastDay = await withRangeCache(() => ask(pinned, { compute, cache, now }));
+    expect(lastDay.served.cache).toBe(1);
+
+    clearPointMemory();
+    t += 1;
+    const month = await withRangeCache(() => ask(pinned, { compute, cache, now }));
+    expect(month.served).toEqual({ memory: 0, cache: 0, computed: 1, expired: 1, revalidated: 0 });
+  });
+
+  it("tells a point never asked about from one whose answer was too old", async () => {
+    const { cache } = store();
+    const compute = computer();
+    let t = 1_000_000;
+    const now = () => t;
+
+    await withRangeCache(() => ask(pts("1,1"), { compute, cache, now }));
+    t += REVALIDATED_TTL_SECONDS * 1000;
+    // Memory and the colo both hold the old answer; it is counted once.
+    const out = await withRangeCache(() => ask(pts("1,1;2,2"), { compute, cache, now }));
+    expect(out.served).toEqual({ memory: 0, cache: 0, computed: 2, expired: 1, revalidated: 2 });
   });
 
   it("stores each answer for as long as it is trusted", async () => {
@@ -333,7 +351,7 @@ describe("cachedPointHeights", () => {
     const points = pts("0,0");
     await withRangeCache(() => ask(points, { compute, cache, disabled: true }));
     const again = await withRangeCache(() => ask(points, { compute, cache, disabled: true }));
-    expect(again.served).toEqual({ memory: 0, cache: 0, computed: 1 });
+    expect(again.served).toEqual({ memory: 0, cache: 0, computed: 1, expired: 0, revalidated: 0 });
     expect(match).not.toHaveBeenCalled();
     expect(compute).toHaveBeenCalledTimes(2);
   });

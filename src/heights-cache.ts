@@ -42,16 +42,19 @@ import { resolveTilesetVersion, type Tileset } from "./tilesets.js";
  * hours for those bought nothing and cost most of the hit rate — two and a
  * half hours after this cache was deployed only 30% of points were answered
  * from it, because each colo forgot the set of points faster than it
- * learned it. A week is still fresher than the tile path, which never picks
- * up a new snapshot under the same version, and it bounds how long a mirror
- * refresh stays invisible here once that changes.
+ * learned it. Thirty days is still fresher than the tile path, which never
+ * picks up a new snapshot under the same version, and it is one cycle of the
+ * monthly planet mirror (mirror/wrangler.toml), so it bounds how long a
+ * refresh stays invisible here once that changes. It was a week at first;
+ * from the seventh day CPU per request crept back up, and an expiry that
+ * comes round every week is a cost the snapshots never asked for.
  *
  * Neither path can be fresher than the upstream fetch it builds from, which
  * the edge holds for a day (`cacheTtl` in `MapterhornSource`). That is
  * unchanged by this cache and is shared with the tile path.
  */
 export const REVALIDATED_TTL_SECONDS = 6 * 60 * 60;
-export const PINNED_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const PINNED_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /**
  * Answers held in this isolate. One is a key of about sixty characters and
@@ -97,7 +100,16 @@ export interface Served {
   memory: number;
   cache: number;
   computed: number;
+  /** Of `computed`, the points that had an answer here which was too old.
+   *  The rest were never asked about at this colo, or the colo's cache
+   *  evicted them, which the Cache API does not tell apart. */
+  expired: number;
+  /** Of `computed`, the answers kept for six hours rather than thirty days. */
+  revalidated: number;
 }
+
+/** What a layer had for a point: an answer, one too old to use, or nothing. */
+type Found = Answer | "expired" | null;
 
 export interface PointHeightsOptions {
   /** Work to run after the response, for the stores. */
@@ -143,7 +155,7 @@ export async function cachedPointHeights(
   points: SamplePoint[],
   opts: PointHeightsOptions,
 ): Promise<{ heights: PointHeights[]; served: Served }> {
-  const served: Served = { memory: 0, cache: 0, computed: 0 };
+  const served: Served = { memory: 0, cache: 0, computed: 0, expired: 0, revalidated: 0 };
   if (opts.disabled) {
     served.computed = points.length;
     return { heights: await opts.compute(points), served };
@@ -156,9 +168,11 @@ export async function cachedPointHeights(
 
   // Layer one: this isolate.
   const pending: number[] = [];
+  const expired = new Set<number>();
   for (let i = 0; i < points.length; i++) {
     const hit = recall(keys[i]!, now());
-    if (hit) {
+    if (hit === "expired") expired.add(i);
+    if (hit && hit !== "expired") {
       out[i] = heightsOf(hit);
       served.memory++;
     } else {
@@ -177,7 +191,8 @@ export async function cachedPointHeights(
       }
       storable.add(i);
       const hit = await lookup(store, keys[i]!, now());
-      if (hit) {
+      if (hit === "expired") expired.add(i);
+      if (hit && hit !== "expired") {
         refund(1); // the store it was set aside for will not happen
         storable.delete(i);
         remember(keys[i]!, hit);
@@ -202,8 +217,10 @@ export async function cachedPointHeights(
     const heights = computed[j]!;
     out[i] = heights;
     served.computed++;
+    if (expired.has(i)) served.expired++;
 
     const answer = answerOf(heights, at);
+    if (answer?.ttl === REVALIDATED_TTL_SECONDS) served.revalidated++;
     if (!answer) {
       // Budget set aside for a store that is not going to be made.
       if (storable.has(i)) refund(1);
@@ -247,11 +264,11 @@ function heightsOf(a: Answer): PointHeights {
   return { elevation: a.elevation, geoid: a.geoid, ellipsoid: a.elevation + a.geoid };
 }
 
-function recall(key: string, now: number): Answer | null {
+function recall(key: string, now: number): Found {
   const hit = memory.get(key);
   if (!hit) return null;
   memory.delete(key);
-  if (!isFresh(hit, now)) return null;
+  if (!isFresh(hit, now)) return "expired";
   memory.set(key, hit);
   return hit;
 }
@@ -278,7 +295,7 @@ function ttlOf(a: Answer): number {
   return a.ttl ?? REVALIDATED_TTL_SECONDS;
 }
 
-async function lookup(store: PointStore, key: string, now: number): Promise<Answer | null> {
+async function lookup(store: PointStore, key: string, now: number): Promise<Found> {
   try {
     const hit = await store.match(new Request(key));
     if (!hit) return null;
@@ -292,7 +309,7 @@ async function lookup(store: PointStore, key: string, now: number): Promise<Answ
     }
     const answer: Answer = { elevation: body.elevation, geoid: body.geoid, at: body.at };
     if (typeof body.ttl === "number") answer.ttl = body.ttl;
-    return isFresh(answer, now) ? answer : null;
+    return isFresh(answer, now) ? answer : "expired";
   } catch {
     // A cache that cannot be read is not a reason to fail the request.
     return null;
