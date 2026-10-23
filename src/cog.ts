@@ -233,6 +233,31 @@ export interface OpenedCog {
 // changes, include the bucket identity in the key.
 const openedCogs = new Map<string, Promise<OpenedCog>>();
 
+/**
+ * Read every part of the file's directories that geotiff.js would otherwise
+ * read on first use: the overview IFDs `GeoTIFF.readRasters` walks, and the
+ * tags left out of the header read, `TileOffsets` and `TileByteCounts` among
+ * them.
+ *
+ * geotiff.js remembers those first-use reads as promises on the objects we
+ * memoize above, and hands them to every later caller with no deadline. A
+ * read left pending by a request that went away would hang every tile that
+ * needs it for the rest of the isolate's life, and one that failed would
+ * fail them all — it never forgets a rejection. Read here, they happen
+ * inside `shared`, which drops a stuck or failed open and lets the next
+ * caller start again. It also buys each array in one read rather than one
+ * per tile.
+ */
+async function loadEverything(tiff: GeoTIFF): Promise<void> {
+  const count = await tiff.getImageCount();
+  for (let i = 0; i < count; i++) {
+    const ifd = (await tiff.getImage(i)).fileDirectory;
+    // Typed `string | number`, but the parser only ever keys these by tag id.
+    const tags = [...ifd.deferredFields.keys(), ...ifd.deferredArrays.keys()] as number[];
+    await Promise.all(tags.map((tag) => ifd.loadValue(tag)));
+  }
+}
+
 /** Open a COG stored in R2 and return its first (highest-resolution) image. */
 export function openCog(
   bucket: R2Bucket,
@@ -249,6 +274,7 @@ export function openCog(
         source as unknown as Parameters<typeof GeoTIFF.fromSource>[0],
       );
       const image = await tiff.getImage();
+      await loadEverything(tiff);
       return { tiff, image };
     },
     { timeoutMs: OPEN_TIMEOUT_MS },

@@ -11,7 +11,7 @@
 // them. The result is encoded as the Cesium watermask byte payload
 // (Uniform when uniform, Grid otherwise).
 
-import { PMTiles, FetchSource, findTile, zxyToTileId, type Header, type Source } from "pmtiles";
+import { PMTiles, FetchSource, ResolvedValueCache, findTile, zxyToTileId, type Header, type Source } from "pmtiles";
 import { VectorTile } from "@mapbox/vector-tile";
 import Pbf from "pbf";
 import type { GeodeticBounds } from "./cesium.js";
@@ -78,7 +78,11 @@ export class ProtomapsWaterMask implements WaterMaskProvider {
 
   constructor(source: string | Source) {
     const src = typeof source === "string" ? new FetchSource(source) : source;
-    this.#pmtiles = new PMTiles(src);
+    // Values, not promises: this provider lives as long as the isolate, and
+    // PMTiles' default cache would hand a header read left pending by a
+    // request that went away to every later one. See the same choice in
+    // src/mapterhorn-mirror.ts.
+    this.#pmtiles = new PMTiles(src, new ResolvedValueCache());
   }
 
   async buildMask(bounds: GeodeticBounds, signal?: AbortSignal): Promise<Uint8Array> {

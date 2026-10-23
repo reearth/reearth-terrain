@@ -22,7 +22,7 @@
 // don't re-read `${archive}.latest.json` on every request, and a pool
 // of opened `PMTiles` handles so the directory pages stay resident.
 
-import { PMTiles } from "pmtiles";
+import { PMTiles, ResolvedValueCache } from "pmtiles";
 import { R2PmtilesSource } from "./protomaps.js";
 import { decode_terrarium_webp, DecodedTile } from "./wasm/reearth-terrain-wasm/reearth_terrain_wasm.js";
 import type { DemSource, DemTile } from "./dem.js";
@@ -73,6 +73,14 @@ export class MirroredMapterhornSource implements DemSource {
   // PMTiles handles per archive. Each handle owns its own
   // directory-page cache, so reusing it across requests is the whole
   // point of keeping it around per isolate.
+  //
+  // That cache holds values, not promises. PMTiles' default
+  // `SharedPromiseCache` parks the in-flight header and directory reads
+  // and hands them to every later caller, with no deadline — so a read
+  // left pending by a request that went away hangs every tile in the
+  // archive for the rest of the isolate's life, underneath the `shared`
+  // around our own reads. See src/single-flight.ts. The price is that
+  // callers that miss at the same moment each read the page.
   #pmtiles = new Map<string, PMTiles>();
   #inflight = new Map<string, Promise<DemTile | null>>();
   #cache = new Map<string, DemTile | null>();
@@ -131,7 +139,7 @@ export class MirroredMapterhornSource implements DemSource {
 
     let pmt = this.#pmtiles.get(archive);
     if (!pmt) {
-      pmt = new PMTiles(new R2PmtilesSource(this.#r2, pointer.key));
+      pmt = new PMTiles(new R2PmtilesSource(this.#r2, pointer.key), new ResolvedValueCache());
       this.#pmtiles.set(archive, pmt);
     }
 
@@ -217,8 +225,9 @@ export class HybridMapterhornSource implements DemSource {
   #r2: R2Bucket;
   #prefix: string;
   #planetMaxZoom: number;
-  #mirroredSet: Promise<Set<string>> | null = null;
+  #mirroredSet: Set<string> | null = null;
   #mirroredExpires = 0;
+  #listing = new Map<string, Promise<Set<string>>>();
 
   constructor(
     mirror: MirroredMapterhornSource,
@@ -269,16 +278,20 @@ export class HybridMapterhornSource implements DemSource {
 
   async #mirroredArchives(): Promise<Set<string>> {
     if (this.#mirroredSet && this.#mirroredExpires > Date.now()) return this.#mirroredSet;
-    const p = this.#listMirroredArchives();
-    this.#mirroredSet = p;
+    // Only the finished set is kept for the hour. The listing in flight goes
+    // through `shared`, because this source lives as long as the isolate and
+    // a listing left pending by a request that went away would otherwise
+    // hang every tile above the planet archive until the hour ran out. A
+    // failed listing is not kept, so the next call retries.
+    const set = await shared(
+      this.#listing,
+      "list",
+      () => this.#listMirroredArchives(),
+      { timeoutMs: READ_TIMEOUT_MS, keepResolved: false },
+    );
+    this.#mirroredSet = set;
     this.#mirroredExpires = Date.now() + 60 * 60 * 1000;
-    p.catch(() => {
-      // Drop the failed cache so the next call retries instead of
-      // serving an empty set indefinitely.
-      this.#mirroredSet = null;
-      this.#mirroredExpires = 0;
-    });
-    return p;
+    return set;
   }
 
   async #listMirroredArchives(): Promise<Set<string>> {

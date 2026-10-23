@@ -1,6 +1,9 @@
+import { waitUntil } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 
 import { shared } from "./single-flight.js";
+
+vi.mock("cloudflare:workers", () => ({ waitUntil: vi.fn() }));
 
 /** A promise that never settles — what the runtime leaves behind. */
 const never = <T>() => new Promise<T>(() => {});
@@ -104,5 +107,32 @@ describe("shared", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps the work it starts alive past the request that started it", async () => {
+    // A client that goes away must not take a read others are waiting on
+    // down with it. Only the starter hands it over; a joiner has nothing new.
+    vi.mocked(waitUntil).mockClear();
+    const cache = new Map<string, Promise<number>>();
+    let finish!: (n: number) => void;
+    const work = new Promise<number>((resolve) => (finish = resolve));
+
+    const first = shared(cache, "k", () => work, { timeoutMs: 1000, keepResolved: false });
+    const second = shared(cache, "k", async () => 9, { timeoutMs: 1000, keepResolved: false });
+    expect(waitUntil).toHaveBeenCalledTimes(1);
+
+    finish(7);
+    await expect(Promise.all([first, second])).resolves.toEqual([7, 7]);
+    // What it handed over is this work, not a copy that settles on its own.
+    await expect(vi.mocked(waitUntil).mock.calls[0]![0]).resolves.toBe(7);
+  });
+
+  it("does not let a failure it hands over go unhandled", async () => {
+    vi.mocked(waitUntil).mockClear();
+    const cache = new Map<string, Promise<number>>();
+    await expect(
+      shared(cache, "k", async () => { throw new Error("nope"); }, { timeoutMs: 1000 }),
+    ).rejects.toThrow("nope");
+    await expect(vi.mocked(waitUntil).mock.calls[0]![0]).resolves.toBeUndefined();
   });
 });
