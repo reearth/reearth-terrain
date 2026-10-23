@@ -1,3 +1,4 @@
+import type { Source } from "pmtiles";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MASK_SIZE, ProtomapsWaterMask, maskToRgba } from "./water.js";
 
@@ -23,6 +24,31 @@ describe("ProtomapsWaterMask.buildMask", () => {
     const mask = await provider.buildMask({ west: 0, east: 10, south: 0, north: 10 });
     // classifyMask returns [0] when nothing got marked water.
     expect(mask).toEqual(new Uint8Array([0]));
+  });
+});
+
+describe("ProtomapsWaterMask, after a request goes away", () => {
+  it("does not hand a header read that never settles to the next caller", async () => {
+    // What the runtime leaves behind when a client disconnects mid-read. The
+    // provider outlives the request, and PMTiles' default cache would park
+    // this read and give it to everyone after — hanging them all.
+    let reads = 0;
+    const source: Source = {
+      getKey: () => "stuck.pmtiles",
+      getBytes: () => {
+        reads++;
+        return reads === 1 ? new Promise(() => {}) : Promise.reject(new Error("unreachable"));
+      },
+    };
+    const provider = new ProtomapsWaterMask(source);
+    const bounds = { west: 0, east: 1, south: 0, north: 1 };
+
+    void provider.buildMask(bounds);
+    const second = await Promise.race([
+      provider.buildMask(bounds),
+      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 500)),
+    ]);
+    expect(second).toEqual(new Uint8Array([0]));
   });
 });
 
