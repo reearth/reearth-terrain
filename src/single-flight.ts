@@ -20,6 +20,16 @@
 // entry that has not settled within its deadline is dropped and the work is
 // started again for this caller. The abandoned promise is left alone — it is
 // not ours to cancel, and it will never settle anyway.
+//
+// It also keeps the work it starts alive past the request that started it,
+// by handing it to `waitUntil`. A client that goes away then no longer takes
+// the shared read down with it: the read settles, and everyone waiting on it
+// gets the answer instead of sitting out the deadline. This only stretches
+// an ended invocation by as long as one read takes — the runtime will not
+// keep one alive for much longer than that (see `scheduled` in src/index.ts).
+// The deadline above stays, for whatever waitUntil cannot save.
+
+import { waitUntil } from "cloudflare:workers";
 
 export interface SharedOptions {
   /**
@@ -61,6 +71,7 @@ export async function shared<T>(
     if (cache.get(key) === started) cache.delete(key);
   };
   started.then(keepResolved ? undefined : forget, forget);
+  waitUntil(started.catch(() => {}));
   return started;
 }
 
