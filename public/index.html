@@ -10,6 +10,8 @@
     />
     <link rel="canonical" href="https://terrain.reearth.land/" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Shared Re:Earth nav bar (public/reearth-nav.js); sets --reearth-nav-h. -->
+    <script src="/reearth-nav.js"></script>
     <meta name="theme-color" content="#c8372d" />
 
     <!-- Open Graph -->
@@ -93,28 +95,20 @@
           background 320ms ease,
           color 320ms ease;
         scroll-behavior: smooth;
+        scroll-padding-top: var(--reearth-nav-h);
       }
 
-      /* ----- theme toggle ----- */
+      /* ----- theme toggle (in the "end" slot of <reearth-nav>) ----- */
       .theme-toggle {
-        position: fixed;
-        top: 16px;
-        right: 16px;
-        z-index: 100;
         display: flex;
         gap: 2px;
-        padding: 4px;
-        border-radius: 999px;
-        background: rgba(0, 0, 0, 0.4);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
       }
       .theme-toggle button {
         appearance: none;
         border: 0;
         cursor: pointer;
-        width: 36px;
-        height: 36px;
+        width: 32px;
+        height: 32px;
         padding: 0;
         border-radius: 999px;
         display: inline-flex;
@@ -137,6 +131,11 @@
         width: 18px;
         height: 18px;
         display: block;
+        /* Matches the nav's text shadow over the hero. */
+        filter: drop-shadow(0 1px 8px rgba(0, 0, 0, 0.45));
+      }
+      .theme-toggle button[aria-pressed="true"] svg {
+        filter: none;
       }
 
       /* ----- hero ----- */
@@ -194,7 +193,7 @@
         inset: 0 0 32px 0;
         display: grid;
         grid-template-rows: 1fr auto;
-        padding: 64px;
+        padding: calc(var(--reearth-nav-h) + 40px) 64px 64px;
       }
       .hero-title {
         font-family: var(--display);
@@ -803,32 +802,33 @@
     </style>
   </head>
   <body>
-    <!-- theme toggle -->
-    <div class="theme-toggle" role="group" aria-label="Theme">
-      <button
-        type="button"
-        data-palette="alpha"
-        aria-pressed="true"
-        aria-label="Light theme"
-        title="Light theme"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="4" />
-          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-        </svg>
-      </button>
-      <button
-        type="button"
-        data-palette="gamma"
-        aria-pressed="false"
-        aria-label="Dark theme"
-        title="Dark theme"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-        </svg>
-      </button>
-    </div>
+    <reearth-nav current="terrain">
+      <div class="theme-toggle" slot="end" role="group" aria-label="Theme">
+        <button
+          type="button"
+          data-palette="alpha"
+          aria-pressed="true"
+          aria-label="Light theme"
+          title="Light theme"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          data-palette="gamma"
+          aria-pressed="false"
+          aria-label="Dark theme"
+          title="Dark theme"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+          </svg>
+        </button>
+      </div>
+    </reearth-nav>
 
     <!-- hero -->
     <section class="hero" id="hero">

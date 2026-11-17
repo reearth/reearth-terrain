@@ -356,8 +356,7 @@ section, not here.
 
 ### Theme toggle
 
-Fixed top-right, glass pill (`backdrop-filter: blur(12px)`,
-`rgba(0,0,0,0.4)` bg). Two `36×36` icon buttons — sun (Alpha / light)
+At the right of the Re:Earth nav bar. Two `32×32` icon buttons — sun (Alpha / light)
 and moon (Gamma / dark) — using 18px Lucide-style stroke SVGs. Active
 state fills the button with `--red`. Preference persists in
 `localStorage` under `reearth-terrain:theme`; default on first visit is
@@ -366,6 +365,27 @@ light.
 The two palettes are still named (Akafuji Atlas, Sumi Akafuji) in CSS
 comments and copy, but the UI surfaces them as a plain light/dark
 switch — most visitors don't need the palette vocabulary.
+
+### Re:Earth nav bar (`<reearth-nav>`)
+
+The bar across the top of the landing page marks
+Terrain as one of the Re:Earth open-data sites: the Re:Earth wordmark
+(linking to reearth.io), then Terrain, Buildings and Papers, with the
+current site underlined. It is a custom element defined in
+`public/reearth-nav.js`, with its styles in a shadow root so it looks
+the same on every site.
+
+- Fixed, overlaying the page, 56px tall, white text with a soft
+  shadow. No background until the page scrolls; then dark glass
+  (`rgba(0,0,0,0.4)`, `blur(12px)`).
+- The theme toggle sits at its right, in the `end` slot. On a phone
+  the logo shrinks to the icon so the bar still fits on one line.
+- The script sets `--reearth-nav-h` on `<html>` before `<body>` is
+  parsed. Anything anchored to the top of the viewport (hero content,
+  anchor scroll) offsets by it.
+- `reearth-buildings` and `reearth-papers` carry an identical copy of
+  the file; change all three together.
+- Not on the viewer, which is a tool page.
 
 ### Hero globe (`<iframe>`)
 
