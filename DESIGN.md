@@ -385,6 +385,10 @@ the same on every site.
   anchor scroll) offsets by it.
 - `reearth-buildings` and `reearth-papers` carry an identical copy of
   the file; change all three together.
+- A site restyles it with custom properties on the element (listed
+  at the top of the file). Papers uses `solid` (background from the
+  start) with its own paper, ink and EB Garamond, because its basemaps
+  can be light, dark or imagery.
 - Not on the viewer, which is a tool page.
 
 ### Hero globe (`<iframe>`)

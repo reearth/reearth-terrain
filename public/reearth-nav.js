@@ -18,6 +18,18 @@
 //   current  terrain | buildings | papers — marks this site's link
 //   tone     dark (default) | light — white text (dark glass once
 //            scrolled), or black text (light glass once scrolled)
+//   solid    show the background from the start, not only once the
+//            page scrolls — for a page whose layout starts below the
+//            bar rather than under it
+//
+// A page restyles the bar by setting these on the reearth-nav element
+// (a page's own rules win over the bar's defaults):
+//   --fg      logo, hovered and current link
+//   --fg-dim  other links
+//   --bg      background (once scrolled, or with solid)
+//   --line    bottom border, under the background
+//   --mark    current link's underline (default: its text colour)
+//   --font    font of the links
 (() => {
   const HEIGHT = "56px";
   // Set before <body> is parsed (load this script in <head>, without
@@ -48,11 +60,14 @@
       --bg: rgba(0, 0, 0, 0.4);
       --line: rgba(255, 255, 255, 0.1);
       --halo: 0 1px 8px rgba(0, 0, 0, 0.45);
+      --mark: currentColor;
+      --font: 500 14px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
       /* Until scrolled, only the logo and links take the pointer, so the
          map under the empty part of the bar can still be dragged. */
       pointer-events: none;
     }
-    :host([scrolled]) {
+    :host([scrolled]),
+    :host([solid]) {
       pointer-events: auto;
     }
     :host([tone="light"]) {
@@ -76,10 +91,11 @@
         border-color 250ms ease,
         backdrop-filter 250ms ease,
         -webkit-backdrop-filter 250ms ease;
-      font: 500 14px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+      font: var(--font);
       -webkit-font-smoothing: antialiased;
     }
-    :host([scrolled]) nav {
+    :host([scrolled]) nav,
+    :host([solid]) nav {
       background: var(--bg);
       border-bottom-color: var(--line);
       text-shadow: none;
@@ -106,7 +122,8 @@
       color: var(--fg);
       filter: drop-shadow(var(--halo));
     }
-    :host([scrolled]) .logo {
+    :host([scrolled]) .logo,
+    :host([solid]) .logo {
       filter: none;
     }
     .logo svg {
@@ -125,19 +142,26 @@
       pointer-events: auto;
     }
     ul {
+      align-self: stretch;
       display: flex;
       gap: 20px;
       margin: 0;
       padding: 0;
       list-style: none;
     }
+    /* Full bar height, so the current link's underline sits on the
+       bar's bottom edge whatever --font is. The 2px top padding keeps
+       the text centred against the 2px underline. */
     li a {
-      display: block;
-      padding: 21px 0 19px;
+      box-sizing: border-box;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      padding-top: 2px;
       border-bottom: 2px solid transparent;
     }
     li a[aria-current="page"] {
-      border-bottom-color: currentColor;
+      border-bottom-color: var(--mark);
     }
     @media (max-width: 480px) {
       :host([has-end]) nav { gap: 16px; padding: 0 12px; }
